@@ -1,210 +1,184 @@
 # CodexMeter
 
-CodexMeter is a native macOS menu bar app that keeps your ChatGPT/Codex usage
-limits visible at a glance — no Codex CLI, no terminal, no child process. Sign
-in once with your ChatGPT account and the menu bar shows how much of your
-five-hour and weekly allowance remains.
+CodexMeter 是一款原生 macOS 菜单栏应用，让你的 ChatGPT/Codex 用量限额一目
+了然——无需 Codex CLI、无需终端、没有子进程。登录一次 ChatGPT 账号，菜单栏
+即可显示 5 小时与每周额度的剩余情况。
 
-Source builds also support optional DeepSeek balance and experimental MiniMax
-plan-quota connections. These provider additions are not part of release 1.6.3.
+源码构建版还支持可选的 DeepSeek 余额与实验性 MiniMax 套餐额度连接。这些
+平台接入不包含在 1.6.3 发行版中。
 
 ![macOS 13+](https://img.shields.io/badge/macOS-13%2B-black)
 ![Swift](https://img.shields.io/badge/Swift-5-orange)
 ![Version](https://img.shields.io/badge/version-1.6.3-blue)
 
 > [!NOTE]
-> CodexMeter is an unofficial community project. It is not affiliated with or
-> endorsed by OpenAI.
+> CodexMeter 是非官方社区项目，与 OpenAI 无关联，也未获得其认可。
 
-## Preview
+## 预览
 
-### Menu Bar Popover
-
-<p align="center">
-  <img src="docs/images/codexmeter-menu-bar-popover.png" width="380" alt="CodexMeter menu-bar popover showing quota windows with reset countdowns and detailed progress bars">
-</p>
-
-### Popover Customization
+### 菜单栏弹窗
 
 <p align="center">
-  <img src="docs/images/codexmeter-popover-customization.png" width="560" alt="CodexMeter popover customization window with quota window visibility and menu bar indicator controls">
+  <img src="docs/images/codexmeter-menu-bar-popover.png" width="380" alt="CodexMeter 菜单栏弹窗，展示带重置倒计时和详细进度条的额度窗口">
 </p>
 
-## Features
+### 弹窗自定义
 
-- **Direct ChatGPT sign-in** — an explicit device-code flow signs you in from
-  the app; nothing else needs to be installed or running.
-- **Menu bar indicator** with concentric progress rings:
-  - outer ring: remaining quota;
-  - inner ring: remaining time before reset.
-- **Automatic window choice** for the menu bar: the five-hour window when your
-  plan returns one, otherwise the weekly window, otherwise the most constrained
-  window. A window you pick explicitly in Settings always wins.
-- Six menu bar styles: concentric rings, bar beside percentage, bar below
-  percentage, dual compact bars, percentage-only, and progress-only.
-- **Popover** listing every returned quota window with remaining-quota and
-  remaining-time bars, reset countdowns, and an on-pace/over-pace indicator.
-- **Decrease flash** — when fresh quota drops, only the changed percentage
-  digits turn red for half a second and fade back over two seconds; the percent
-  sign keeps its normal color. Reduced Motion restores the color instantly.
-- **Popover customization** — show or hide each quota window and choose which
-  one drives the menu bar indicator. The GPT-Reserve weekly bucket starts
-  hidden. Hidden windows keep refreshing.
-- **Refresh behavior** — at launch, about once a minute in the background,
-  whenever the popover opens, and on manual request. A failed refresh keeps the
-  last snapshot and marks it stale; requests never overlap.
-- **Launch at login**, Light/Dark/system appearance, and
-  English / 简体中文 / 繁體中文 localization.
-- **Optional platform connections** — DeepSeek balance and experimental MiniMax
-  plan quota, selected instead of Codex from the popover header.
-- **Developer options** — live menu bar appearance tuning with preview,
-  deterministic quota-state presets, custom quota/time sliders, JSON export, a
-  v9.9.9 update-state preview, and a one-click reset to the accepted defaults.
-- **Sparkle-based updates** — daily checks, EdDSA-signed archives, one-click
-  download/install/relaunch, and an opt-in automatic-install preference.
+<p align="center">
+  <img src="docs/images/codexmeter-popover-customization.png" width="560" alt="CodexMeter 弹窗自定义窗口，包含额度窗口可见性与菜单栏指示器控制">
+</p>
 
-## Quick Start
+## 功能特性
 
-### Requirements
+- **ChatGPT 直接登录**——通过应用内的设备码流程完成登录，无需安装或运行
+  任何其他软件。
+- **菜单栏指示器**，双同心进度环：
+  - 外环：剩余额度；
+  - 内环：重置前的剩余时间。
+- **菜单栏自动选择窗口**：账号返回 5 小时窗口时优先显示它，否则显示周
+  窗口，仅在未知套餐结构下退回最受约束的窗口。在设置中明确选择的窗口
+  始终优先。
+- 六种菜单栏样式：同心环、条形+百分比、百分比下方条形、双紧凑条形、仅
+  百分比、仅进度条。
+- **弹窗**列出返回的每个额度窗口，包含剩余额度/剩余时间双进度条、重置
+  倒计时与消耗节奏（正常/偏快）指示。
+- **下降闪烁**——额度下降时，仅变化的百分比数字变红并保持半秒，随后在
+  两秒内平滑恢复；百分号保持原色。开启"减弱动态效果"时立即恢复颜色。
+- **弹窗自定义**——显示或隐藏每个额度窗口，选择驱动菜单栏指示器的窗口。
+  GPT-Reserve 周额度默认隐藏。隐藏的窗口仍会继续刷新。
+- **刷新机制**——启动时、后台约每分钟一次、弹窗打开时以及手动刷新。刷新
+  失败时保留上次快照并标记为可能过期；请求不会重叠。
+- **登录时启动**、浅色/深色/跟随系统外观，以及英语 / 简体中文 / 繁體中文
+  本地化。
+- **可选平台连接**——DeepSeek 余额与实验性 MiniMax 套餐额度，在弹窗顶部
+  选择后替代 Codex 显示。
+- **开发者选项**——实时菜单栏外观调节（带预览）、确定性额度状态预设、
+  自定义额度/时间滑块、JSON 配置导出、v9.9.9 更新状态预览，以及一键恢复
+  默认外观。
+- **基于 Sparkle 的更新**——每日检查、EdDSA 签名校验、一键下载/安装/
+  重启，自动安装为可选项。
 
-- macOS 13 or later.
-- A ChatGPT (Codex-capable) account.
-- Xcode with support for this project, when building from source.
-- For optional platform connections: the corresponding API key.
+## 快速开始
 
-### Build and Run
+### 环境要求
+
+- macOS 13 或更高版本。
+- 支持 Codex 的 ChatGPT 账号。
+- 从源码构建时需要支持本项目的 Xcode。
+- 可选平台连接需要对应平台的 API 密钥。
+
+### 构建运行
 
 ```bash
-git clone https://github.com/raycalrui/CodexMeter.git
+git clone https://github.com/Ryu2u/CodexMeter.git
 cd CodexMeter
 open CodexMeter.xcodeproj
 ```
 
-1. Select the `CodexMeter` scheme and **My Mac** as the destination.
-2. Press **Run**.
-3. CodexMeter is menu-bar-only (no Dock icon). Open its popover and choose
-   **Sign In with ChatGPT…**, then finish the flow in your browser.
+1. 选择 `CodexMeter` scheme，目标设备选 **My Mac**。
+2. 按 **Run** 运行。
+3. CodexMeter 是纯菜单栏应用（无 Dock 图标）。打开弹窗，选择
+   **使用 ChatGPT 登录**，然后在浏览器中完成流程。
 
-### Download
+### 下载安装
 
-Download `CodexMeter-1.6.3.dmg` from the
-[GitHub Releases](https://github.com/raycalrui/CodexMeter/releases) page and
-drag the app into Applications. The archive is ad-hoc signed and not
-notarized, so macOS may block the first launch: Control-click the app, choose
-**Open**, and confirm once.
+从 [GitHub Releases](https://github.com/Ryu2u/CodexMeter/releases) 下载
+`CodexMeter-1.6.3.dmg`，拖入"应用程序"文件夹。安装包为 ad-hoc 签名且未经
+公证，macOS 可能拦截首次启动：右键点击应用选择 **打开** 并确认一次即可。
 
-## How It Works
+## 工作原理
 
-### Codex direct sign-in
+### Codex 直接登录
 
-CodexMeter has exactly one Codex source: an explicit device-code sign-in.
+CodexMeter 只有一个 Codex 来源：明确的设备码登录。
 
-1. The app requests a device code from OpenAI and opens
-   `auth.openai.com/codex/device` in your browser with the code on your
-   clipboard.
-2. You sign in with your ChatGPT account and confirm the code.
-3. CodexMeter exchanges the authorization for tokens and starts polling the
-   same `wham/usage` quota endpoint the official clients use, about once per
-   minute plus on popover opening and manual refresh.
+1. 应用向 OpenAI 请求设备码，并自动打开浏览器进入
+   `auth.openai.com/codex/device`，验证码已同时复制到剪贴板。
+2. 使用 ChatGPT 账号登录并确认验证码。
+3. CodexMeter 用授权码换取令牌，开始轮询官方客户端使用的同一 `wham/usage`
+   额度接口——后台约每分钟一次，弹窗打开与手动刷新时也会请求。
 
-Credential handling:
+凭据处理：
 
-- Only the refresh credential is persisted, in CodexMeter's own Keychain item
-  (`com.codexmeter.codex-oauth.v1`, this-device-only accessibility).
-- Access tokens live in memory alone and are never written to disk.
-- A rotated refresh credential is persisted **before** the new access token is
-  used, so an interrupted rotation cannot strand the sign-in.
-- A rejected refresh drops the dead credential and returns to the sign-in
-  state; **Disconnect** in Settings removes the stored credential.
-- Quota is display-only: there is no local usage database, history, token
-  counting, notification, or export chain behind it.
-- The OAuth and quota endpoints are undocumented and experimental; they may
-  change without notice.
+- 仅持久化刷新凭据，保存在 CodexMeter 自己的钥匙串项中
+  （`com.codexmeter.codex-oauth.v1`，仅限本机访问）。
+- 访问令牌只存在于内存中，绝不落盘。
+- 轮换出的新刷新凭据会在使用新访问令牌**之前**持久化，因此轮换中断也不
+  会导致登录失效。
+- 刷新凭据被拒绝时，应用会丢弃失效凭据并回到登录状态；设置中的
+  **断开连接**会删除已存储的凭据。
+- 额度仅用于展示：背后没有本地用量数据库、历史记录、令牌统计、通知或
+  导出链路。
+- OAuth 与额度接口为未公开的实验性接口，可能随时变更。
 
-CodexMeter does not scrape ChatGPT web pages and never reads Codex
-authentication files such as the CLI's `auth.json`.
+CodexMeter 不会抓取 ChatGPT 网页，也绝不读取 Codex 认证文件（如 CLI 的
+`auth.json`）。
 
-### Menu bar indicator
+### 菜单栏指示器
 
-The automatic selection shows the **five-hour window** when the account
-returns one, falls back to the **weekly window**, and only uses the most
-constrained window for unknown quota shapes. You can pin any returned window
-in Settings → Menu Bar & Popover; that choice persists even when another
-window becomes lower.
+自动选择优先显示 **5 小时窗口**（账号返回时），其次回退到 **周窗口**，
+仅在未知额度结构下使用最受约束的窗口。你可以在 设置 → 菜单栏与弹窗 中
+固定任意返回的窗口；该选择会持久保留，即使其他窗口变得更低也不会被替换。
 
-### External platform connections (source builds)
+### 外部平台连接（源码构建版）
 
-Settings → Platforms & Connections adds DeepSeek or MiniMax with a
-user-supplied API key and an explicit region. Selecting a connection in the
-popover header replaces the Codex view; no selection shows Codex. Enabled
-connections poll independently every five minutes and support manual refresh.
-Changing a key or region starts a new connection identity and clears its
-displayed snapshot; renaming does not.
+设置 → 平台与连接 中添加 DeepSeek 或 MiniMax，输入用户自己的 API 密钥并
+明确选择区域。在弹窗顶部选择某个连接后，将替代 Codex 视图；未选择时显示
+Codex。已启用的连接每五分钟独立轮询，也支持手动刷新。修改密钥或区域会
+生成新的连接身份并清除其显示快照；重命名则不会。
 
-- **DeepSeek** uses the official `GET /user/balance` endpoint at
-  `api.deepseek.com`. Balances stay separate by currency and are shown as
-  money without inventing quota percentages or reset times.
-- **MiniMax** is experimental. Its `GET /v1/token_plan/remains` adapter
-  follows the pinned first-party MiniMax CLI contract via `api.minimax.cn`
-  (China) and `api.minimax.io` (global). Weekly boosts can push the
-  base-equivalent percentage above 100%, so progress and pace use the
-  normalized capacity of the current plan. Missing fields are shown as
-  unavailable, never zero. The adapter has fixture coverage but has not been
-  validated against a live account.
+- **DeepSeek** 使用官方 `GET /user/balance` 接口（api.deepseek.com）。余额
+  按币种分列，以金额形式展示，不会虚构额度百分比或重置时间。
+- **MiniMax** 为实验性支持。其 `GET /v1/token_plan/remains` 适配器遵循
+  固定版本的 MiniMax 官方 CLI 契约（以适配器源码内固定值为准），中国区
+  使用 api.minimax.cn，国际区使用 api.minimax.io。周加成可能使等效
+  百分比超过 100%，因此进度与节奏按当前套餐的归一化容量计算。缺失字段
+  显示为"不可用"，绝不当作零。该适配器有测试覆盖，但尚未经真实账号验证。
 
-External API keys are saved only in CodexMeter's own Keychain namespace;
-automatic reads never trigger Keychain prompts. No inference traffic passes
-through CodexMeter.
+外部 API 密钥仅保存在 CodexMeter 自己的钥匙串命名空间中；自动读取不会
+触发钥匙串授权弹窗。任何推理流量都不会经过 CodexMeter。
 
-## Settings
+## 设置
 
-The menu-bar **Settings** entry opens one resizable window with:
+菜单栏 **设置** 入口打开一个可调大小的窗口，包含：
 
-| Category | Contents |
+| 分类 | 内容 |
 | --- | --- |
-| General | Language, appearance, launch at login, Codex account (sign-in / disconnect) |
-| Platforms & Connections | DeepSeek / MiniMax API keys and regions |
-| Menu Bar & Popover | Menu bar style, per-window popover visibility, indicator source window |
-| Developer | Appearance tuning, preview presets, update-state preview |
-| About | Version, update channel and checks, repository, privacy, license |
+| 通用 | 语言、外观、登录时启动、Codex 账户（登录/断开连接） |
+| 平台与连接 | DeepSeek / MiniMax API 密钥与区域 |
+| 菜单栏与弹窗 | 菜单栏样式、各额度窗口可见性、指示器来源窗口 |
+| 开发者 | 外观调节、预览预设、更新状态预览 |
+| 关于 | 版本、更新通道与检查、仓库、隐私、许可证 |
 
-## Privacy and Security
+## 隐私与安全
 
-- Codex quota is read over HTTPS from `wham/usage` after an explicit
-  device-code sign-in, using an ephemeral URL session with redirects disabled,
-  a 20-second timeout, and a 512 KiB response cap.
-- CodexMeter does not read Codex authentication files and never scrapes ChatGPT
-  web pages.
-- Only the OAuth refresh credential is persisted, inside CodexMeter's own
-  Keychain item. Access tokens stay in memory; Disconnect removes the
-  credential.
-- No local usage database is kept. The app stores only user preferences.
-- External connection API keys live in CodexMeter's own Keychain namespace.
-- Errors are locally authored messages; raw server errors and exception
-  details are never displayed.
-- Account email addresses, tokens, and raw authentication responses are never
-  logged.
-- In-app updates require Sparkle 2.9.6 or later and keep HTTPS transport and
-  EdDSA archive verification.
-- No analytics or tracking.
+- Codex 额度在明确的设备码登录后，通过 HTTPS 从 `wham/usage` 读取，使用
+  禁用重定向的临时 URL 会话、20 秒超时和 512 KiB 响应上限。
+- CodexMeter 不读取 Codex 认证文件，不抓取 ChatGPT 网页。
+- 仅 OAuth 刷新凭据会被持久化，存放在 CodexMeter 自己的钥匙串项中。访问
+  令牌只保留在内存中；断开连接即删除凭据。
+- 不保留本地用量数据库，应用只存储用户偏好设置。
+- 外部连接的 API 密钥保存在 CodexMeter 自己的钥匙串命名空间中。
+- 错误信息为本地编写的文案，绝不显示可能包含隐私数据的原始服务器错误或
+  系统异常详情。
+- 绝不记录账号邮箱、令牌或原始认证响应。
+- 应用内更新要求 Sparkle 2.9.6 或更高版本，并保持 HTTPS 传输与 EdDSA
+  归档校验。
+- 无任何自主分析或追踪。
 
-App Sandbox is currently disabled for historical reasons (the removed App
-Server child process) and can be revisited before any Mac App Store
-distribution.
+App Sandbox 目前因历史原因（已移除的 App Server 子进程）保持禁用，可在
+未来 Mac App Store 发行前重新评估。
 
-## Known Limitations
+## 已知限制
 
-- The direct sign-in uses undocumented OpenAI OAuth and quota endpoints; it may
-  stop working if those endpoints change.
-- Provider adapters have fixture coverage only and have not been validated
-  against live DeepSeek or MiniMax accounts.
-- Launch-at-login behavior must be tested with a signed build.
-- The downloadable DMG is ad-hoc signed and not notarized, so first launch may
-  require Control-click → **Open**.
+- 直接登录使用未公开的 OpenAI OAuth 与额度接口；接口变更可能导致失效。
+- 平台适配器仅有测试覆盖，尚未在真实 DeepSeek 或 MiniMax 账号上验证。
+- 登录时启动功能需使用签名构建进行测试。
+- 可下载的 DMG 为 ad-hoc 签名且未经公证，首次启动可能需要右键 → **打开**。
 
-## Development
+## 开发
 
-Build from Terminal:
+从终端构建：
 
 ```bash
 xcodebuild \
@@ -216,32 +190,30 @@ xcodebuild \
   build
 ```
 
-Run the core unit tests:
+运行核心单元测试：
 
 ```bash
 swift test
 git diff --check
 ```
 
-If `xcode-select` points at Command Line Tools instead of full Xcode, set
-`DEVELOPER_DIR` before either command.
+若 `xcode-select` 指向的是 Command Line Tools 而非完整 Xcode，请在执行
+上述命令前设置 `DEVELOPER_DIR`。
 
-Pure quota math, OAuth protocol, provider adapters, popover configuration, and
-semantic-version logic live under `CodexMeter/Core`. `Package.swift` exposes
-only that directory to Swift Package Manager so the core stays testable
-independently of the macOS UI. See [AGENTS.md](AGENTS.md) for the full
-architecture and verification checklist.
+纯额度计算、OAuth 协议、平台适配器、弹窗配置与语义版本逻辑位于
+`CodexMeter/Core`。`Package.swift` 仅将该目录暴露给 Swift Package Manager，
+使核心逻辑独立于 macOS UI 进行测试。完整架构与验证清单见
+[AGENTS.md](AGENTS.md)。
 
-### Publishing a Sparkle update
+### 发布 Sparkle 更新
 
-After building the Release app, re-sign the embedded Sparkle framework and the
-outer bundle in that order:
+构建 Release 应用后，按顺序重新签名内嵌 Sparkle 框架与外层应用包：
 
 ```bash
 Scripts/sign_ad_hoc_release.sh /path/to/CodexMeter.app
 ```
 
-Create the DMG from the verified app, then generate and sign the appcast:
+用校验过的应用制作 DMG，然后生成并签名 appcast：
 
 ```bash
 Scripts/prepare_sparkle_update.sh \
@@ -250,28 +222,27 @@ Scripts/prepare_sparkle_update.sh \
   /path/to/Sparkle/bin
 ```
 
-Pass `beta` as the fourth argument for a prerelease. Upload the exact signed
-DMG to the matching GitHub Release, commit and push the regenerated
-`appcast.xml`, and verify its download URL before announcing.
+预发布版本将 `beta` 作为第四个参数传入。将签好名的 DMG 原样上传到对应的
+GitHub Release，提交并推送重新生成的 `appcast.xml`，并在发布公告前核实其
+下载地址。
 
-## Contributing
+## 参与贡献
 
-Issues and pull requests are welcome. Before submitting a change:
+欢迎提交 Issue 和 Pull Request。提交变更前请执行：
 
 ```bash
 swift test
 git diff --check
 ```
 
-Menu bar or popover changes additionally need a UI smoke test: launch exactly
-one signed app instance, click the status item, and confirm the popover opens
-and responds.
+涉及菜单栏或弹窗的改动还需要 UI 冒烟测试：启动一个签名应用实例，点击
+状态栏图标，确认弹窗能打开且控件可响应。
 
-## License
+## 许可证
 
-CodexMeter is available under the [MIT License](LICENSE).
+CodexMeter 基于 [MIT 许可证](LICENSE) 发布。
 
-## Disclaimer
+## 免责声明
 
-Codex and OpenAI are trademarks of OpenAI. This project is an independent
-utility and may stop working when upstream experimental interfaces change.
+Codex 和 OpenAI 是 OpenAI 的商标。本项目是一个独立工具，上游实验性接口
+变更时可能停止工作。
