@@ -2,7 +2,6 @@ import AppKit
 import SwiftUI
 
 enum CodexMeterWindowID {
-    static let history = "usage-history"
     static let about = "about"
     static let settings = "app-settings"
 }
@@ -10,86 +9,78 @@ enum CodexMeterWindowID {
 @main
 struct CodexMeterApp: App {
     @StateObject private var settings: AppSettings
-    @StateObject private var history: UsageHistoryModel
-    @StateObject private var usageService: CodexUsageService
+    @StateObject private var oauth: CodexOAuthUsageService
     @StateObject private var updateChecker: UpdateChecker
+    @StateObject private var providers: ProviderUsageCoordinator
 
     init() {
-        // Complete crash recovery before settings derives any account identity.
-        try? HistoryBackup.recoverInterruptedRestore(databaseURL: UsageHistoryStore.defaultDatabaseURL()) { salt in
-            UserDefaults.standard.set(salt, forKey: "history.identitySalt")
-            guard UserDefaults.standard.synchronize() else { throw HistoryBackupError.storageFailure }
-        }
-        // The service and settings UI must share one settings instance so changes
-        // such as notification thresholds take effect immediately.
+        // The service and settings UI must share one settings instance so
+        // appearance and preview changes take effect immediately.
         let settings = AppSettings()
-        let history = UsageHistoryModel()
         let updateChecker = UpdateChecker(
-            includePrereleases: settings.includePrereleaseUpdates
+            includePrereleases: settings.includePrereleaseUpdates,
+            startingUpdater: !ProviderUIFixture.isEnabled
         )
         _settings = StateObject(wrappedValue: settings)
-        _history = StateObject(wrappedValue: history)
-        _usageService = StateObject(
-            wrappedValue: CodexUsageService(settings: settings, history: history)
-        )
+        let oauth = CodexOAuthUsageService(enabled: !ProviderUIFixture.isEnabled)
+        _oauth = StateObject(wrappedValue: oauth)
+        // Direct sign-in is the only Codex source, so polling always runs.
+        oauth.start()
         _updateChecker = StateObject(wrappedValue: updateChecker)
+        let providers = ProviderUIFixture.makeCoordinator()
+        _providers = StateObject(wrappedValue: providers)
+        providers.start()
     }
 
     var body: some Scene {
         MenuBarExtra {
             ContentView(
-                service: usageService,
                 settings: settings,
-                history: history,
-                updateChecker: updateChecker
+                updateChecker: updateChecker,
+                providers: providers,
+                oauth: oauth
             )
             .appAppearance(settings.appearanceMode)
         } label: {
-            MenuBarProgressView(
-                remainingPercent: menuBarSnapshot.remainingPercent,
-                remainingTimePercent: menuBarSnapshot.remainingTimePercent,
-                title: menuBarSnapshot.title,
-                style: settings.menuBarStyle,
-                attentionLevel: menuBarSnapshot.attentionLevel,
-                isStale: menuBarSnapshot.isStale,
-                appearance: settings.developerAppearance,
-                flashContext: settings.developerPreviewEnabled ? nil : usageService.historyAccountKey.map {
-                    $0 + ":" + (settings.popoverContent.selectedMenuBarWindow(from: usageService.windows)?.historyID ?? "")
+            Group {
+                if providers.selectedConnectionID != nil && !settings.developerPreviewEnabled {
+                    ProviderMenuBarLabel(providers: providers, settings: settings)
+                } else {
+                    MenuBarProgressView(
+                        remainingPercent: menuBarSnapshot.remainingPercent,
+                        remainingTimePercent: menuBarSnapshot.remainingTimePercent,
+                        title: menuBarSnapshot.title,
+                        style: settings.menuBarStyle,
+                        attentionLevel: menuBarSnapshot.attentionLevel,
+                        isStale: menuBarSnapshot.isStale,
+                        appearance: settings.developerAppearance,
+                        flashContext: settings.developerPreviewEnabled ? nil : menuFlashContext
+                    )
                 }
-            )
+            }
+            .background { ProviderFixtureSettingsLauncher() }
         }
         .menuBarExtraStyle(.window)
 
         Window("CodexMeter", id: CodexMeterWindowID.settings) {
-            AppSettingsView(service: usageService, settings: settings,
-                            history: history, updateChecker: updateChecker)
+            AppSettingsView(settings: settings, updateChecker: updateChecker,
+                            providers: providers, oauth: oauth)
                 .appAppearance(settings.appearanceMode)
         }
         .defaultSize(width: 840, height: 700)
         .windowResizability(.contentMinSize)
 
-        Window("CodexMeter", id: CodexMeterWindowID.history) {
-            UsageHistoryView(
-                service: usageService,
-                settings: settings,
-                history: history
-            )
-            .appAppearance(settings.appearanceMode)
-        }
-        .defaultSize(width: 900, height: 820)
-        .windowStyle(.hiddenTitleBar)
-        .windowResizability(.contentMinSize)
-
         Window("CodexMeter", id: CodexMeterWindowID.about) {
-            AboutView(
-                settings: settings,
-                history: history,
-                updateChecker: updateChecker
-            )
-            .appAppearance(settings.appearanceMode)
+            AboutView(settings: settings, updateChecker: updateChecker)
+                .appAppearance(settings.appearanceMode)
         }
         .defaultSize(width: 500, height: 620)
         .windowResizability(.contentSize)
+    }
+
+    private var menuFlashContext: String? {
+        "codex-oauth:" +
+            (settings.popoverContent.selectedMenuBarWindow(from: oauth.windows)?.historyID ?? "")
     }
 
     private var menuBarSnapshot: MenuBarPreviewSnapshot {
@@ -97,16 +88,14 @@ struct CodexMeterApp: App {
             return settings.developerPreviewSnapshot
         }
 
-        let window = settings.popoverContent.selectedMenuBarWindow(
-            from: usageService.windows
-        )
+        let window = settings.popoverContent.selectedMenuBarWindow(from: oauth.windows)
         return MenuBarPreviewSnapshot(
             remainingPercent: window?.remainingPercent,
             remainingTimePercent: window?.remainingTimePercent(at: Date()),
             title: window.map { "\($0.remainingPercent)%" }
-                ?? (usageService.isLoading ? "…" : "--"),
+                ?? (oauth.isBusy && oauth.windows.isEmpty ? "…" : "--"),
             attentionLevel: window?.attentionLevel(at: Date()) ?? .normal,
-            isStale: usageService.isStale
+            isStale: oauth.isStale
         )
     }
 }

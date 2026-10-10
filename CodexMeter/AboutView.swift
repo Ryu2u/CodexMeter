@@ -3,7 +3,6 @@ import SwiftUI
 
 struct AboutView: View {
     @ObservedObject var settings: AppSettings
-    @ObservedObject var history: UsageHistoryModel
     @ObservedObject var updateChecker: UpdateChecker
     var embedded = false
     @Environment(\.dismiss) private var dismiss
@@ -21,7 +20,6 @@ struct AboutView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     identitySection
                     updateSection
-                    dataSection
                     privacySection
                     licenseSection
                 }
@@ -161,23 +159,6 @@ struct AboutView: View {
                     destination: release.releasePageURL
                 )
             }
-        }
-    }
-
-    private var dataSection: some View {
-        GroupBox(L10n.string("about.local_data")) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(history.databaseURL.path)
-                    .font(.caption.monospaced())
-                    .textSelection(.enabled)
-                Button(L10n.string("about.reveal_data")) {
-                    let target = FileManager.default.fileExists(atPath: history.databaseURL.path)
-                        ? history.databaseURL
-                        : history.databaseURL.deletingLastPathComponent()
-                    NSWorkspace.shared.activateFileViewerSelecting([target])
-                }
-            }
-            .padding(.top, 6)
         }
     }
 

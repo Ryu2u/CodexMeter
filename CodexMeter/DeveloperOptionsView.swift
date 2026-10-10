@@ -4,7 +4,6 @@ import SwiftUI
 /// Keeps experimental appearance controls separate from the everyday settings.
 struct DeveloperOptionsView: View {
     @ObservedObject var settings: AppSettings
-    @ObservedObject var history: UsageHistoryModel
     @ObservedObject var updateChecker: UpdateChecker
     var embedded = false
     @Environment(\.dismiss) private var dismiss
@@ -29,7 +28,6 @@ struct DeveloperOptionsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     previewGroup
-                    historyPreviewGroup
                     updatePreviewGroup
                     typographyGroup
                     geometryGroup
@@ -57,27 +55,6 @@ struct DeveloperOptionsView: View {
                         updateChecker.clearDeveloperPreview()
                     }
                     .disabled(!updateChecker.isDeveloperPreview)
-                    Spacer()
-                }
-            }
-            .padding(.top, 4)
-        }
-    }
-
-    private var historyPreviewGroup: some View {
-        GroupBox(L10n.string("developer.history_preview")) {
-            VStack(alignment: .leading, spacing: 10) {
-                Text(L10n.string("developer.history_preview_help"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                HStack {
-                    Button(L10n.string("developer.history_preview_generate")) {
-                        Task { await history.generateDeveloperPreviewData() }
-                    }
-                    Button(L10n.string("developer.history_preview_clear"), role: .destructive) {
-                        Task { await history.clearDeveloperPreviewData() }
-                    }
                     Spacer()
                 }
             }

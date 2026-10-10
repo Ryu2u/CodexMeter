@@ -31,12 +31,12 @@ final class UpdateChecker: NSObject, ObservableObject, SPUUpdaterDelegate {
     private var stateBeforeDeveloperPreview: State?
     private var updaterController: SPUStandardUpdaterController!
 
-    init(includePrereleases: Bool = false) {
+    init(includePrereleases: Bool = false, startingUpdater: Bool = true) {
         includesPrereleases = includePrereleases
         super.init()
 
         updaterController = SPUStandardUpdaterController(
-            startingUpdater: true,
+            startingUpdater: startingUpdater,
             updaterDelegate: self,
             userDriverDelegate: nil
         )

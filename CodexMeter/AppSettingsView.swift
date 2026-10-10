@@ -1,22 +1,18 @@
-import AppKit
 import SwiftUI
-import UniformTypeIdentifiers
 
 /// Shares existing settings objects so reorganizing controls never migrates preferences.
 struct AppSettingsView: View {
-    @ObservedObject var service: CodexUsageService
     @ObservedObject var settings: AppSettings
-    @ObservedObject var history: UsageHistoryModel
     @ObservedObject var updateChecker: UpdateChecker
-    @Environment(\.openWindow) private var openWindow
+    @ObservedObject var providers: ProviderUsageCoordinator
+    @ObservedObject var oauth: CodexOAuthUsageService
     @State private var selection: String? = "settings.category.general"
-    @State private var showsClearConfirmation = false
     @State private var actionError: String?
 
     private let categories = [
         ("settings.category.general", "gearshape"),
+        ("providers.category", "network"),
         ("settings.category.menu", "menubar.rectangle"),
-        ("settings.category.history", "externaldrive"),
         ("developer.title", "hammer"),
         ("about.title", "info.circle")
     ]
@@ -32,16 +28,14 @@ struct AppSettingsView: View {
         } detail: {
             Group {
                 switch selection {
+                case "providers.category":
+                    ProviderConnectionsView(providers: providers)
                 case "settings.category.menu":
-                    PopoverCustomizationView(service: service, settings: settings)
-                case "settings.category.history":
-                    historySettings
+                    PopoverCustomizationView(oauth: oauth, settings: settings)
                 case "developer.title":
-                    DeveloperOptionsView(settings: settings, history: history,
-                                         updateChecker: updateChecker, embedded: true)
+                    DeveloperOptionsView(settings: settings, updateChecker: updateChecker, embedded: true)
                 case "about.title":
-                    AboutView(settings: settings, history: history,
-                              updateChecker: updateChecker, embedded: true)
+                    AboutView(settings: settings, updateChecker: updateChecker, embedded: true)
                 default:
                     generalSettings
                 }
@@ -64,21 +58,15 @@ struct AppSettingsView: View {
         } message: {
             Text(settings.settingsError ?? actionError ?? "")
         }
-        .alert(L10n.string("history.clear.title"), isPresented: $showsClearConfirmation) {
-            Button(L10n.string("action.cancel"), role: .cancel) { }
-            Button(L10n.string("history.clear.confirm"), role: .destructive) {
-                Task { await history.clearAll(); actionError = history.errorMessage }
-            }
-        } message: { Text(L10n.string("history.clear.message")) }
     }
 
     private var generalSettings: some View {
         Form {
+            Section(L10n.string("oauth.account_section")) {
+                OAuthAccountRow(oauth: oauth) { actionError = $0 }
+            }
             Section {
-                Picker(L10n.string("settings.language"), selection: Binding(
-                    get: { settings.language },
-                    set: { settings.language = $0; service.refresh() }
-                )) {
+                Picker(L10n.string("settings.language"), selection: $settings.language) {
                     ForEach(AppLanguage.allCases) { Text($0.localizedName).tag($0) }
                 }
                 Picker(L10n.string("settings.appearance"), selection: $settings.appearanceMode) {
@@ -88,57 +76,56 @@ struct AppSettingsView: View {
                     get: { settings.launchAtLoginEnabled }, set: { settings.setLaunchAtLogin($0) }
                 ))
             }
-            Section {
-                Toggle(L10n.string("settings.notifications"), isOn: Binding(
-                    get: { settings.notificationsEnabled }, set: { service.setNotificationsEnabled($0) }
-                ))
-                if settings.notificationsEnabled {
-                    Picker(L10n.string("settings.notification_threshold"), selection: $settings.notificationThreshold) {
-                        ForEach([10, 20, 30, 40], id: \.self) { Text("\($0)%").tag($0) }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+/// Account controls for the direct Codex sign-in source.
+private struct OAuthAccountRow: View {
+    @ObservedObject var oauth: CodexOAuthUsageService
+    var onError: (String?) -> Void
+
+    var body: some View {
+        if let code = oauth.deviceCode {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(L10n.string("oauth.login_pending"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(L10n.format("oauth.user_code_format", code.userCode))
+                    .font(.title3.monospaced())
+                    .textSelection(.enabled)
+                HStack {
+                    Button(L10n.string("oauth.open_browser")) {
+                        NSWorkspace.shared.open(code.verificationURL)
                     }
+                    Button(L10n.string("oauth.cancel_login")) { oauth.cancelLogin() }
                 }
             }
-        }
-        .formStyle(.grouped)
-    }
-
-    private var historySettings: some View {
-        Form {
-            Section(L10n.string("history.storage.title")) {
-                Picker(L10n.string("history.retention"), selection: $settings.historyRetention) {
-                    ForEach(HistoryRetention.allCases) { Text($0.localizedName).tag($0) }
+            .padding(.vertical, 4)
+        } else if oauth.isConnected {
+            HStack {
+                Label(L10n.string("oauth.connected"), systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                Spacer()
+                Button(L10n.string("oauth.disconnect"), role: .destructive) {
+                    do { try oauth.disconnect() } catch { onError(L10n.string("oauth.storage_error")) }
                 }
-                .onChange(of: settings.historyRetention) { value in
-                    Task { await history.applyRetention(value); actionError = history.errorMessage }
-                }
-                LabeledContent(L10n.string("history.storage.title")) {
-                    Text(ByteCountFormatter.string(fromByteCount: history.storageSize, countStyle: .file))
-                        .foregroundStyle(.secondary)
-                }
-                Button(L10n.string("history.export"), action: exportCSV)
-                    .disabled(history.activeAccountKey == nil)
-                Button(L10n.string("history.clear"), role: .destructive) { showsClearConfirmation = true }
-                Text(L10n.string("history.storage.privacy")).font(.caption).foregroundStyle(.secondary)
             }
-            .disabled(history.isRestoring || history.needsRestart)
-            HistoryBackupView(settings: settings, history: history)
-        }
-        .formStyle(.grouped)
-        .task { await history.refreshMetadata() }
-    }
-
-    private func exportCSV() {
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.commaSeparatedText]
-        panel.nameFieldStringValue = "CodexMeter-History.csv"
-        panel.begin { response in
-            guard response == .OK, let url = panel.url else { return }
-            Task {
-                do {
-                    let data = try await history.exportCSV()
-                    try data.write(to: url, options: .atomic)
-                } catch { actionError = L10n.string("backup.failed") }
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                if let message = oauth.errorMessage {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+                Text(L10n.string("oauth.experimental_notice"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button(L10n.string("oauth.login")) { oauth.beginLogin() }
+                    .disabled(oauth.isBusy)
             }
+            .padding(.vertical, 4)
         }
     }
 }

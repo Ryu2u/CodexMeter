@@ -64,7 +64,6 @@ enum AppLanguage: String, CaseIterable, Identifiable {
 
 enum SettingsDestination: Equatable {
     /// Identifies the System Settings pane that can resolve the latest error.
-    case notifications
     case loginItems
 }
 
@@ -111,42 +110,6 @@ extension DeveloperPreviewPreset {
     }
 }
 
-extension HistoryRetention {
-    var localizedName: String {
-        L10n.string("history.retention.\(rawValue)")
-    }
-}
-
-extension TokenActivityRange {
-    var localizedName: String {
-        L10n.string("history.range.\(rawValue)")
-    }
-}
-
-extension QuotaHistoryRange {
-    var localizedName: String {
-        L10n.string("history.quota.range.\(rawValue)")
-    }
-}
-
-extension QuotaHistoryMode {
-    var localizedName: String {
-        historyRange?.localizedName ?? L10n.string("history.quota.mode.browse")
-    }
-}
-
-extension QuotaCalendarPeriod {
-    var localizedName: String {
-        L10n.string("history.quota.calendar.\(rawValue)")
-    }
-}
-
-extension PopoverContentSection {
-    var localizedName: String {
-        L10n.string("settings.popover.section.\(rawValue)")
-    }
-}
-
 /// Persists user preferences and bridges settings that are owned by macOS.
 final class AppSettings: ObservableObject {
     @Published var appearanceMode: AppAppearanceMode {
@@ -175,18 +138,6 @@ final class AppSettings: ObservableObject {
                 defaults.set(data, forKey: Keys.popoverContent)
             }
         }
-    }
-
-    @Published var notificationsEnabled: Bool {
-        didSet { defaults.set(notificationsEnabled, forKey: Keys.notificationsEnabled) }
-    }
-
-    @Published var notificationThreshold: Int {
-        didSet { defaults.set(notificationThreshold, forKey: Keys.notificationThreshold) }
-    }
-
-    @Published var historyRetention: HistoryRetention {
-        didSet { defaults.set(historyRetention.rawValue, forKey: Keys.historyRetention) }
     }
 
     @Published var includePrereleaseUpdates: Bool {
@@ -236,8 +187,6 @@ final class AppSettings: ObservableObject {
     @Published var settingsError: String?
     @Published var settingsDestination: SettingsDestination?
 
-    let historyIdentitySalt: String
-
     private let defaults: UserDefaults
 
     private enum Keys {
@@ -245,9 +194,6 @@ final class AppSettings: ObservableObject {
         static let language = "language"
         static let menuBarStyle = "menuBarStyle"
         static let popoverContent = "popover.contentConfiguration"
-        static let notificationsEnabled = "notificationsEnabled"
-        static let notificationThreshold = "notificationThreshold"
-        static let historyRetention = "history.retention"
         static let includePrereleaseUpdates = "updates.includePrereleases"
         static let developerAppearance = "developer.appearance"
         static let developerAppearanceDefaultsVersion = "developer.appearanceDefaultsVersion"
@@ -255,19 +201,10 @@ final class AppSettings: ObservableObject {
         static let developerPreviewPreset = "developer.previewPreset"
         static let developerPreviewRemainingPercent = "developer.previewRemainingPercent"
         static let developerPreviewRemainingTimePercent = "developer.previewRemainingTimePercent"
-        static let historyIdentitySalt = "history.identitySalt"
     }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        if let storedSalt = defaults.string(forKey: Keys.historyIdentitySalt),
-           !storedSalt.isEmpty {
-            historyIdentitySalt = storedSalt
-        } else {
-            let newSalt = UUID().uuidString
-            defaults.set(newSalt, forKey: Keys.historyIdentitySalt)
-            historyIdentitySalt = newSalt
-        }
         appearanceMode = AppAppearanceMode(
             rawValue: defaults.string(forKey: Keys.appearanceMode) ?? ""
         ) ?? .system
@@ -286,12 +223,6 @@ final class AppSettings: ObservableObject {
         } else {
             popoverContent = .defaultValue
         }
-        notificationsEnabled = defaults.bool(forKey: Keys.notificationsEnabled)
-        let storedThreshold = defaults.integer(forKey: Keys.notificationThreshold)
-        notificationThreshold = storedThreshold == 0 ? 20 : storedThreshold
-        historyRetention = HistoryRetention(
-            rawValue: defaults.string(forKey: Keys.historyRetention) ?? ""
-        ) ?? .forever
         includePrereleaseUpdates = defaults.bool(forKey: Keys.includePrereleaseUpdates)
         let appearanceDefaultsVersion = defaults.integer(
             forKey: Keys.developerAppearanceDefaultsVersion
@@ -343,21 +274,9 @@ final class AppSettings: ObservableObject {
         developerPreviewRemainingTimePercent = 55
     }
 
-    func setPopoverSection(_ section: PopoverContentSection, visible: Bool) {
-        var updated = popoverContent
-        updated.setSection(section, visible: visible)
-        popoverContent = updated
-    }
-
     func setQuotaWindow(_ window: CodexUsageWindow, visible: Bool) {
         var updated = popoverContent
         updated.setQuotaWindow(window, visible: visible)
-        popoverContent = updated
-    }
-
-    func movePopoverSection(_ section: PopoverContentSection, by offset: Int) {
-        var updated = popoverContent
-        updated.moveSection(section, by: offset)
         popoverContent = updated
     }
 
@@ -438,9 +357,6 @@ final class AppSettings: ObservableObject {
         // These URLs open the pane where macOS owns the final permission state.
         let urlString: String
         switch settingsDestination {
-        case .notifications:
-            let bundleID = Bundle.main.bundleIdentifier ?? "com.raycal.CodexMeter"
-            urlString = "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=\(bundleID)"
         case .loginItems:
             urlString = "x-apple.systempreferences:com.apple.LoginItems-Settings.extension"
         case nil:

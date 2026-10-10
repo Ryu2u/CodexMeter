@@ -24,10 +24,10 @@ private struct ScrollOnlyPopoverIndicators: ViewModifier {
 }
 
 struct ContentView: View {
-    @ObservedObject var service: CodexUsageService
     @ObservedObject var settings: AppSettings
-    @ObservedObject var history: UsageHistoryModel
     @ObservedObject var updateChecker: UpdateChecker
+    @ObservedObject var providers: ProviderUsageCoordinator
+    @ObservedObject var oauth: CodexOAuthUsageService
     @Environment(\.openWindow) private var openWindow
     @State private var maximumPopoverHeight = PopoverLayoutMetrics.initialMaximumHeight
 
@@ -61,17 +61,13 @@ struct ContentView: View {
             }
         }
         .onAppear {
-            service.setPopoverVisible(true)
+            providers.setPopoverVisible(true)
+            oauth.setPopoverVisible(true)
             settings.refreshLaunchAtLoginStatus()
-            service.refreshIfNeeded()
         }
         .onDisappear {
-            service.setPopoverVisible(false)
-        }
-        .task(id: history.dataRevision) {
-            // Load the preferred weekly cycle whenever the popover appears or
-            // a successful refresh records a new local history sample.
-            await history.load()
+            providers.setPopoverVisible(false)
+            oauth.setPopoverVisible(false)
         }
         .alert(
             L10n.string("settings.error_title"),
@@ -101,7 +97,7 @@ struct ContentView: View {
                 previewModeBanner
             }
 
-            if service.isStale {
+            if selectedConnection == nil && !settings.developerPreviewEnabled && oauth.isStale {
                 staleBanner
             }
 
@@ -111,17 +107,10 @@ struct ContentView: View {
 
             Divider()
 
-            if service.isLoading && service.windows.isEmpty {
-                loadingView
-            } else if let errorMessage = service.errorMessage,
-                      service.windows.isEmpty {
-                errorView(errorMessage)
+            if let connection = selectedConnection {
+                ProviderUsageSection(connection: connection, providers: providers, settings: settings)
             } else {
-                if let errorMessage = service.errorMessage {
-                    inlineErrorView(errorMessage)
-                }
-
-                configurableContent
+                oauthSection
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -130,7 +119,7 @@ struct ContentView: View {
     private var bottomControls: some View {
         VStack(alignment: .leading, spacing: 14) {
             Divider()
-            SettingsSection(service: service, settings: settings)
+            SettingsSection()
             Divider()
             footer
         }
@@ -161,32 +150,85 @@ struct ContentView: View {
     }
 
     private var header: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(L10n.string("app.title"))
-                    .font(.headline)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(L10n.string("app.title"))
+                        .font(.headline)
 
-                Text(service.accountDescription)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    Text(headerAccountDescription)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                if isSelectedRefreshInFlight {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+
+                Button {
+                    if selectedConnection != nil {
+                        providers.refreshSelected()
+                    } else {
+                        oauth.refresh()
+                    }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.plain)
+                .help(L10n.string("action.refresh"))
+                .disabled(isSelectedRefreshInFlight)
             }
-
-            Spacer()
-
-            if service.isRefreshInFlight {
-                ProgressView()
-                    .controlSize(.small)
+            if showsSourcePicker {
+                Picker(L10n.string("providers.source"), selection: sourceSelection) {
+                    Text(L10n.string("oauth.source_title")).tag(nil as String?)
+                    ForEach(providers.connections) { connection in
+                        Text(connection.name).tag(Optional(connection.id.uuidString))
+                    }
+                }
+                .pickerStyle(.menu)
+                .disabled(settings.developerPreviewEnabled)
             }
-
-            Button {
-                service.refresh()
-            } label: {
-                Image(systemName: "arrow.clockwise")
-            }
-            .buttonStyle(.plain)
-            .help(L10n.string("action.refresh"))
-            .disabled(service.isRefreshInFlight)
         }
+    }
+
+    private var showsSourcePicker: Bool {
+        !settings.developerPreviewEnabled && !providers.connections.isEmpty
+    }
+
+    private var sourceSelection: Binding<String?> {
+        Binding(
+            get: {
+                guard !settings.developerPreviewEnabled else { return nil }
+                return providers.selectedConnectionID?.uuidString
+            },
+            set: { value in
+                guard !settings.developerPreviewEnabled else { return }
+                providers.selectedConnectionID = value.flatMap(UUID.init(uuidString:))
+            }
+        )
+    }
+
+    private var headerAccountDescription: String {
+        if selectedConnection != nil { return selectedConnection?.name ?? "" }
+        if let planType = oauth.planType {
+            return L10n.format("account.chatgpt_format", planType.capitalized)
+        }
+        return L10n.string("oauth.source_title")
+    }
+
+    private var selectedConnection: ProviderConnection? {
+        guard !settings.developerPreviewEnabled else { return nil }
+        return providers.connections.first { $0.id == providers.selectedConnectionID }
+    }
+
+    private var isSelectedRefreshInFlight: Bool {
+        if selectedConnection != nil {
+            return providers.statuses[selectedConnection?.id ?? UUID()]?.isLoading ?? false
+        }
+        return oauth.isBusy
     }
 
     private var staleBanner: some View {
@@ -239,7 +281,7 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Button(L10n.string("action.retry")) {
-                service.refresh()
+                oauth.refresh()
             }
         }
         .frame(maxWidth: .infinity, minHeight: 90, alignment: .leading)
@@ -253,75 +295,46 @@ struct ContentView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var visibleQuotaWindows: [CodexUsageWindow] {
-        settings.popoverContent.visibleQuotaWindows(from: service.windows)
-    }
-
-    private var displayedSections: [PopoverContentSection] {
-        settings.popoverContent.sectionOrder.filter { section in
-            guard settings.popoverContent.isSectionVisible(section) else { return false }
-
-            switch section {
-            case .quotaWindows:
-                return !visibleQuotaWindows.isEmpty
-            case .resetCredits:
-                return service.rateLimitResetCredits != nil
-            case .quotaHistory, .tokenActivity:
-                return true
-            }
-        }
-    }
-
-    private var configurableContent: some View {
+    @ViewBuilder
+    private var oauthSection: some View {
         VStack(alignment: .leading, spacing: 14) {
-            ForEach(displayedSections) { section in
-                if section != displayedSections.first {
-                    Divider()
+            if let code = oauth.deviceCode {
+                oauthPendingView(code)
+            } else if !oauth.isConnected {
+                oauthSignInPrompt
+            } else if let message = oauth.errorMessage, oauth.windows.isEmpty {
+                errorView(message)
+            } else if oauth.windows.isEmpty {
+                loadingView
+            } else {
+                if let message = oauth.errorMessage {
+                    inlineErrorView(message)
                 }
 
-                popoverSection(section)
+                oauthQuotaList
+
+                if let updated = oauth.lastUpdated {
+                    Text(L10n.format("status.updated_at_format", L10n.formattedDateTime(updated)))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    @ViewBuilder
-    private func popoverSection(_ section: PopoverContentSection) -> some View {
-        switch section {
-        case .quotaWindows:
-            usageView
-        case .resetCredits:
-            if let summary = service.rateLimitResetCredits {
-                ResetCreditsSection(
-                    summary: summary,
-                    appearance: settings.developerAppearance
-                )
-            }
-        case .quotaHistory:
-            Button(action: openHistoryWindow) {
-                menuQuotaSection
-            }
-            .buttonStyle(.plain)
-        case .tokenActivity:
-            Button(action: openHistoryWindow) {
-                menuTokenSection
-            }
-            .buttonStyle(.plain)
-        }
-    }
-
-    private var usageView: some View {
-        // Update countdowns and pace locally every minute without another API call.
+    private var oauthQuotaList: some View {
+        // Update countdowns and pace locally every minute without another request.
         TimelineView(.periodic(from: Date(), by: 60)) { context in
             VStack(spacing: 16) {
-                ForEach(visibleQuotaWindows) { window in
+                ForEach(oauth.windows) { window in
                     UsageWindowRow(
                         window: window,
                         now: context.date,
                         appearance: settings.developerAppearance
                     )
 
-                    if window.id != visibleQuotaWindows.last?.id {
+                    if window.id != oauth.windows.last?.id {
                         Divider()
                     }
                 }
@@ -329,164 +342,60 @@ struct ContentView: View {
         }
     }
 
-    private var menuQuotaSection: some View {
+    private func oauthPendingView(_ code: CodexOAuthDeviceCode) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(L10n.string("history.quota.title"))
-                        .font(.subheadline.weight(.semibold))
-                    Text(L10n.string("history.quota.fixed_cycle"))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+            Label(L10n.string("oauth.login_pending"), systemImage: "globe")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Text(L10n.format("oauth.user_code_format", code.userCode))
+                .font(.title3.monospaced())
+                .textSelection(.enabled)
+
+            HStack {
+                Button(L10n.string("oauth.open_browser")) {
+                    NSWorkspace.shared.open(code.verificationURL)
                 }
-
-                Spacer()
-
-                if let remaining = menuQuotaRemaining {
-                    VStack(alignment: .trailing, spacing: 1) {
-                        Text("\(remaining)%")
-                            .font(.headline.monospacedDigit())
-                        Text(L10n.string("quota.remaining"))
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
+                Button(L10n.string("oauth.cancel_login")) {
+                    oauth.cancelLogin()
                 }
-
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-            }
-
-            if let cycle = menuQuotaCycle {
-                QuotaHistoryChart(series: cycle, showsAxes: false)
-                    .frame(height: 92)
-            } else {
-                HStack(spacing: 8) {
-                    Image(systemName: "chart.xyaxis.line")
-                        .foregroundStyle(HistoryPalette.accent)
-                    Text(L10n.string("history.empty.message"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
             }
         }
-        .contentShape(Rectangle())
-        .padding(.vertical, 2)
+        .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
     }
 
-    private var menuTokenSection: some View {
+    private var oauthSignInPrompt: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(L10n.string("history.tokens.title"))
-                        .font(.subheadline.weight(.semibold))
-                    Text(TokenActivityRange.month.localizedName)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-
-                if !menuTokenPoints.isEmpty {
-                    VStack(alignment: .trailing, spacing: 1) {
-                        Text(compactToken(menuTokenTotal))
-                            .font(.headline.monospacedDigit())
-                        Text(L10n.string("history.tokens.total"))
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+            if let message = oauth.errorMessage {
+                inlineErrorView(message)
             }
-
-            if menuTokenPoints.isEmpty {
-                HStack(spacing: 8) {
-                    Image(systemName: "chart.bar.fill")
-                        .foregroundStyle(HistoryPalette.accent)
-                    Text(historySummary)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
-            } else {
-                CompactTokenActivityChart(points: menuTokenPoints)
-                    .frame(height: 92)
-            }
+            Text(L10n.string("oauth.experimental_notice"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button(L10n.string("oauth.login")) { oauth.beginLogin() }
+                .disabled(oauth.isBusy)
         }
-        .contentShape(Rectangle())
-        .padding(.vertical, 2)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var menuQuotaCycle: QuotaHistorySeries? {
-        let window = QuotaWindowSelection.preferredDefault(from: history.quotaWindows)
-        guard let window else { return nil }
-
-        let samples = history.quotaSamples.filter { $0.windowID == window.id }
-        guard let cycle = QuotaHistorySeries.makeCurrentCycle(
-            samples: samples,
-            window: window,
-            now: Date()
-        ), !cycle.samples.isEmpty else {
-            return nil
-        }
-        return cycle
-    }
-
-    private var menuQuotaRemaining: Int? {
-        menuQuotaCycle?.samples.last?.remainingPercent
-    }
-
-    private func openHistoryWindow() {
-        openWindow(id: CodexMeterWindowID.history)
-        NSApplication.shared.activate(ignoringOtherApps: true)
-    }
-
-    private var menuTokenPoints: [TokenChartPoint] {
-        TokenChartData.filtered(
-            TokenChartData.points(from: history.tokenUsage ?? service.tokenUsage),
-            range: .month,
-            now: Date()
-        )
-    }
-
-    private var menuTokenTotal: Int64 {
-        menuTokenPoints.reduce(0) { partial, point in
-            let (sum, overflow) = partial.addingReportingOverflow(point.tokens)
-            return overflow ? Int64.max : sum
-        }
-    }
-
-    private func compactToken(_ value: Int64) -> String {
-        CompactTokenFormatter.string(value, locale: L10n.locale)
-    }
-
-    private var historySummary: String {
-        if let lifetime = service.tokenUsage?.summary.lifetimeTokens {
-            return L10n.format(
-                "history.summary.tokens_format",
-                CompactTokenFormatter.string(lifetime, locale: L10n.locale)
-            )
-        }
-        return L10n.string("history.summary.local")
+        .frame(maxWidth: .infinity, minHeight: 90, alignment: .leading)
     }
 
     private var footer: some View {
         HStack {
-            if let lastUpdated = service.lastUpdated {
+            if let lastUpdated = selectedLastUpdated {
                 Text(L10n.format(
                     "status.updated_at_format",
                     L10n.formattedTime(lastUpdated, includingSeconds: true)
                 ))
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
+            } else if selectedConnection != nil {
+                Text(L10n.string("providers.status.notQueried"))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             } else {
-                Text(L10n.string("status.local_server"))
+                Text(L10n.string("oauth.source_title"))
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
@@ -499,6 +408,11 @@ struct ContentView: View {
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
         }
+    }
+
+    private var selectedLastUpdated: Date? {
+        if let selectedConnection { return providers.snapshots[selectedConnection.id]?.fetchedAt }
+        return oauth.lastUpdated
     }
 }
 
@@ -590,115 +504,8 @@ private struct PopoverScreenHeightReader: NSViewRepresentable {
     }
 }
 
-/// Presents banked reset availability without exposing a redemption action.
-private struct ResetCreditsSection: View {
-    let summary: CodexRateLimitResetCreditsSummary
-    let appearance: MenuBarAppearance
-    @Environment(\.colorScheme) private var colorScheme
-
-    var body: some View {
-        TimelineView(.periodic(from: Date(), by: 60)) { context in
-            content(at: context.date)
-        }
-    }
-
-    private func content(at date: Date) -> some View {
-        let usableCredits = summary.usableCredits(at: date)
-
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Label(
-                    L10n.string("reset_credits.title"),
-                    systemImage: "arrow.counterclockwise.circle"
-                )
-                .font(.subheadline.weight(.semibold))
-
-                Spacer()
-
-                Text(countText)
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(summary.hasAvailableCredits ? .primary : .secondary)
-            }
-
-            ForEach(usableCredits) { credit in
-                resetCreditDetail(credit, at: date)
-            }
-
-            if summary.hasAvailableCredits, usableCredits.isEmpty {
-                Text(L10n.string("reset_credits.details_unavailable"))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var countText: String {
-        guard summary.hasAvailableCredits else {
-            return L10n.string("reset_credits.none")
-        }
-        return L10n.format("reset_credits.available_format", summary.availableCount)
-    }
-
-    private func resetCreditDetail(
-        _ credit: CodexRateLimitResetCredit,
-        at date: Date
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            if let expiresAt = credit.expiresAt {
-                if let remainingFraction = credit.remainingLifetimeFraction(at: date) {
-                    ProgressView(value: remainingFraction)
-                        .progressViewStyle(.linear)
-                        .tint(lifetimeTint(for: credit, at: date))
-                        // Recreate the native progress control after an
-                        // appearance switch so AppKit keeps the intended tint.
-                        .id(colorScheme)
-                        .accessibilityLabel(L10n.string("reset_credits.title"))
-                        .accessibilityValue(
-                            L10n.format(
-                                "reset_credits.expires_format",
-                                L10n.formattedDateTime(expiresAt)
-                            )
-                        )
-                }
-
-                Label(
-                    L10n.format(
-                        "reset_credits.expires_format",
-                        L10n.formattedDateTime(expiresAt)
-                    ),
-                    systemImage: "clock"
-                )
-            } else {
-                Label(
-                    L10n.string("reset_credits.no_expiration"),
-                    systemImage: "clock"
-                )
-            }
-        }
-        .font(.caption2)
-        .foregroundStyle(.secondary)
-    }
-
-    private func lifetimeTint(
-        for credit: CodexRateLimitResetCredit,
-        at date: Date
-    ) -> Color {
-        switch credit.lifetimeAttentionLevel(at: date) {
-        case .normal, .none:
-            appearance.normalColor.swiftUIColor(for: colorScheme)
-        case .warning:
-            appearance.warningColor.swiftUIColor(for: colorScheme)
-        case .critical:
-            appearance.criticalColor.swiftUIColor(for: colorScheme)
-        }
-    }
-}
-
 /// Opens the shared settings window without expanding the menu bar popover.
 private struct SettingsSection: View {
-    @ObservedObject var service: CodexUsageService
-    @ObservedObject var settings: AppSettings
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {

@@ -1,57 +1,28 @@
 import Foundation
 
-enum PopoverContentSection: String, CaseIterable, Codable, Identifiable, Sendable {
-    case quotaWindows
-    case resetCredits
-    case quotaHistory
-    case tokenActivity
-
-    var id: String { rawValue }
-}
-
-/// Stores presentation-only choices for the menu-bar popover.
-/// Hidden content continues to refresh and record history in the background.
+/// Stores presentation-only choices for the menu-bar popover: which quota
+/// windows appear, and which window drives the menu bar indicator.
+/// Hidden windows continue to refresh with their quota source.
 struct PopoverContentConfiguration: Codable, Equatable, Sendable {
-    var sectionOrder: [PopoverContentSection]
-    var hiddenSections: Set<PopoverContentSection>
     var hiddenQuotaWindowIDs: Set<String>
     var menuBarQuotaWindowID: String?
 
     static let defaultValue = PopoverContentConfiguration(
-        sectionOrder: PopoverContentSection.allCases,
-        hiddenSections: [],
         hiddenQuotaWindowIDs: [
-            QuotaHistoryWindowIdentity.make(
+            QuotaWindowIdentityKey.make(
                 sourceID: "base_model_inference",
-                durationMins: 7 * 24 * 60
+                windowDurationMins: 7 * 24 * 60
             )
         ],
         menuBarQuotaWindowID: nil
     )
 
     init(
-        sectionOrder: [PopoverContentSection],
-        hiddenSections: Set<PopoverContentSection>,
         hiddenQuotaWindowIDs: Set<String>,
         menuBarQuotaWindowID: String?
     ) {
-        self.sectionOrder = sectionOrder
-        self.hiddenSections = hiddenSections
         self.hiddenQuotaWindowIDs = hiddenQuotaWindowIDs
         self.menuBarQuotaWindowID = menuBarQuotaWindowID
-        normalize()
-    }
-
-    func isSectionVisible(_ section: PopoverContentSection) -> Bool {
-        !hiddenSections.contains(section)
-    }
-
-    mutating func setSection(_ section: PopoverContentSection, visible: Bool) {
-        if visible {
-            hiddenSections.remove(section)
-        } else {
-            hiddenSections.insert(section)
-        }
     }
 
     func isQuotaWindowVisible(_ window: CodexUsageWindow) -> Bool {
@@ -67,15 +38,7 @@ struct PopoverContentConfiguration: Codable, Equatable, Sendable {
     }
 
     func visibleQuotaWindows(from windows: [CodexUsageWindow]) -> [CodexUsageWindow] {
-        guard isSectionVisible(.quotaWindows) else { return [] }
-        return windows.filter(isQuotaWindowVisible)
-    }
-
-    mutating func moveSection(_ section: PopoverContentSection, by offset: Int) {
-        guard let sourceIndex = sectionOrder.firstIndex(of: section) else { return }
-        let destinationIndex = sourceIndex + offset
-        guard sectionOrder.indices.contains(destinationIndex) else { return }
-        sectionOrder.swapAt(sourceIndex, destinationIndex)
+        windows.filter(isQuotaWindowVisible)
     }
 
     func selectedMenuBarWindow(from windows: [CodexUsageWindow]) -> CodexUsageWindow? {
@@ -83,47 +46,65 @@ struct PopoverContentConfiguration: Codable, Equatable, Sendable {
            let selected = windows.first(where: { $0.historyID == menuBarQuotaWindowID }) {
             return selected
         }
+        // Automatic mode favors the five-hour limit and falls back to the weekly
+        // limit; only unknown quota shapes use the most constrained window.
+        for preferredDuration in [300, 10_080] {
+            let matches = windows.filter { $0.windowDurationMins == preferredDuration }
+            if let match = matches.min(by: { $0.remainingPercent < $1.remainingPercent }) {
+                return match
+            }
+        }
         return windows.min { $0.remainingPercent < $1.remainingPercent }
     }
 
     func normalized() -> PopoverContentConfiguration {
-        var copy = self
-        copy.normalize()
-        return copy
-    }
-
-    private mutating func normalize() {
-        var seen: Set<PopoverContentSection> = []
-        sectionOrder = sectionOrder.filter { seen.insert($0).inserted }
-        sectionOrder.append(contentsOf: PopoverContentSection.allCases.filter { !seen.contains($0) })
+        self
     }
 
     private enum CodingKeys: String, CodingKey {
-        case sectionOrder
-        case hiddenSections
         case hiddenQuotaWindowIDs
         case menuBarQuotaWindowID
     }
 
     init(from decoder: Decoder) throws {
-        let defaults = Self.defaultValue
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        sectionOrder = try container.decodeIfPresent(
-            [PopoverContentSection].self,
-            forKey: .sectionOrder
-        ) ?? defaults.sectionOrder
-        hiddenSections = try container.decodeIfPresent(
-            Set<PopoverContentSection>.self,
-            forKey: .hiddenSections
-        ) ?? defaults.hiddenSections
         hiddenQuotaWindowIDs = try container.decodeIfPresent(
             Set<String>.self,
             forKey: .hiddenQuotaWindowIDs
-        ) ?? defaults.hiddenQuotaWindowIDs
+        ) ?? Self.defaultValue.hiddenQuotaWindowIDs
         menuBarQuotaWindowID = try container.decodeIfPresent(
             String.self,
             forKey: .menuBarQuotaWindowID
         )
-        normalize()
+    }
+}
+
+/// Quota windows can swap positions between refreshes, so identity follows
+/// the quota bucket and duration instead of the returned position. The same
+/// stable identity keys popover visibility and menu bar window selection.
+nonisolated enum QuotaWindowIdentityKey {
+    static func make(sourceID: String, windowDurationMins: Int?) -> String {
+        let durationPrefix = "duration:"
+        guard !sourceID.hasPrefix(durationPrefix),
+              let windowDurationMins,
+              windowDurationMins > 0 else {
+            return sourceID
+        }
+
+        let positionalSuffixes = ["-primary", "-secondary"]
+        let bucketID = positionalSuffixes.first(where: sourceID.hasSuffix).map {
+            String(sourceID.dropLast($0.count))
+        } ?? sourceID
+        return "\(durationPrefix)\(windowDurationMins):\(bucketID)"
+    }
+}
+
+extension CodexUsageWindow {
+    /// Stable identity shared by popover visibility and menu bar selection.
+    nonisolated var historyID: String {
+        QuotaWindowIdentityKey.make(
+            sourceID: id,
+            windowDurationMins: windowDurationMins
+        )
     }
 }

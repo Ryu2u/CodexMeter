@@ -1,7 +1,12 @@
 # CodexMeter
 
-CodexMeter is a native macOS menu bar app that keeps your Codex account limits
-visible at a glance.
+CodexMeter is a native macOS menu bar app that keeps your ChatGPT/Codex usage
+limits visible at a glance — no Codex CLI, no terminal, no child process. Sign
+in once with your ChatGPT account and the menu bar shows how much of your
+five-hour and weekly allowance remains.
+
+Source builds also support optional DeepSeek balance and experimental MiniMax
+plan-quota connections. These provider additions are not part of release 1.6.3.
 
 ![macOS 13+](https://img.shields.io/badge/macOS-13%2B-black)
 ![Swift](https://img.shields.io/badge/Swift-5-orange)
@@ -16,204 +21,186 @@ visible at a glance.
 ### Menu Bar Popover
 
 <p align="center">
-  <img src="docs/images/codexmeter-menu-bar-popover.png" width="380" alt="CodexMeter menu-bar popover showing five-hour and weekly quota, reset opportunities, quota history, and token activity">
+  <img src="docs/images/codexmeter-menu-bar-popover.png" width="380" alt="CodexMeter menu-bar popover showing quota windows with reset countdowns and detailed progress bars">
 </p>
 
-### Usage History
+### Popover Customization
 
 <p align="center">
-  <img src="docs/images/codexmeter-usage-history.png" width="900" alt="CodexMeter Usage History window showing browsable quota history and token activity">
-</p>
-
-### Interactive Token Activity
-
-<p align="center">
-  <img src="docs/images/codexmeter-token-activity.png" width="900" alt="CodexMeter interactive Token Activity chart with range selection and hover details">
-</p>
-
-### Customizable Popover
-
-<p align="center">
-  <img src="docs/images/codexmeter-popover-customization.png" width="560" alt="CodexMeter popover customization window with quota source, visibility, ordering, and live preview controls">
+  <img src="docs/images/codexmeter-popover-customization.png" width="560" alt="CodexMeter popover customization window with quota window visibility and menu bar indicator controls">
 </p>
 
 ## Features
 
-- Shows a selected Codex quota directly in the macOS menu bar, with automatic
-  fallback to the quota with the lowest remaining percentage.
-- Uses two concentric progress rings:
+- **Direct ChatGPT sign-in** — an explicit device-code flow signs you in from
+  the app; nothing else needs to be installed or running.
+- **Menu bar indicator** with concentric progress rings:
   - outer ring: remaining quota;
   - inner ring: remaining time before reset.
-- Highlights normal, over-pace, and low-quota states without relying on color
-  alone.
-- Displays the standard 5-hour and weekly Codex quota windows by default, with
-  reset countdowns and detailed progress bars.
-- Shows available banked Codex rate-limit resets as one compact lifetime
-  progress bar and expiration time per reset. This view is read-only and cannot
-  redeem a reset.
-- Compares remaining quota with remaining time to indicate whether consumption
-  is on pace.
-- Refreshes quota on launch, every 10 seconds while the menu is open, every
-  60 seconds in the background, after a Codex rate-limit update, and on manual
-  request. Account checks and Token Activity polling stay at
-  one-minute intervals. Failed automatic refreshes back off up to five minutes;
-  unchanged token responses do not rewrite history.
-- Detects Codex account changes and switches quota data without requiring an app
-  restart.
-- Supports standalone and npm-installed Codex CLI launchers by supplying common
-  local runtime paths to the App Server child process.
-- Preserves the last successful result and marks it as stale when refresh fails.
-- Supports optional low-quota and over-pace notifications.
-- Supports launch at login.
-- Includes English, Simplified Chinese, and Traditional Chinese.
-- Lets the app interface follow the system appearance or stay in Light or Dark
-  mode independently.
-- Offers ring, horizontal-bar, stacked-bar, percentage-only, and progress-only
-  menu bar styles.
-- Lets users independently show, hide, and reorder quota details, reset
-  opportunities, Quota History, and Token Activity in the popover. Each returned
-  quota window has its own visibility switch, and the menu bar indicator can use
-  a chosen window or the automatic lowest-remaining fallback. The default
-  popover shows Reset Opportunities, Quota History, and Token Activity while
-  keeping the GPT-Reserve weekly quota hidden.
-- Includes developer options with presets, custom quota/time sliders, live
-  preview, safe appearance controls,
-  deterministic quota-state presets, JSON configuration export, and a one-click
-  reset to the accepted 1.0 appearance. Developer-only test data can populate
-  30 days of quota history and simulate an available app update.
-- Records local quota history as changes plus 15-minute anchors. The full chart
-  defaults to the current seven-day reset cycle and can also show the rolling
-  last 7 days, 14 days, or month, plus browsable calendar weeks and months.
-  Historical ranges show observed quota consumption across reset cycles and
-  label incomplete totals as lower bounds instead of estimating missing use.
-  Each reset cycle remains a separate smooth curve beginning at 100%, with long
-  unrecorded periods visibly shaded.
-- Shows a compact view of the current weekly quota cycle plus the last 30 days
-  of token activity directly in the menu-bar popover. The full history window
-  can switch token activity between 7 days, 30 days, 90 days, one year, and all
-  locally retained data. One-year data is grouped by week and all-time data by
-  month to remain readable. Token values use compact `k`, `M`, and `B` units
-  instead of scientific notation.
-- Keeps the menu-bar popover compact with divider-separated quota and token
-  sections rather than nested card backgrounds.
-- Provides a resizable, full-screen-capable history window with an integrated
-  transparent title bar. Hovering a token bar smoothly highlights its bucket,
-  keeps the rule and date centered across every range, and reveals its exact day
-  or grouped week/month plus compact token count.
-- Shows optional daily and summary token activity from `account/usage/read`
-  when the current Codex account supports it.
-- Accumulates returned daily token buckets locally, clears them on an explicit
-  account change, and supports 7-, 30-, 90-day, one-year, or unlimited local
-  retention, storage-size reporting, CSV export, and history clearing. CSV
-  exports include both the raw Unix timestamp and a readable ISO 8601 local
-  time with its UTC offset.
-- Uses native Liquid Glass cards and controls on macOS 26, with the same modern
-  chart layout and a system-material fallback on earlier supported macOS.
-- Includes an About window and Sparkle-based signed updates. It checks daily,
-  supports one-click download/install/relaunch, and can optionally download and
-  install future updates automatically.
+- **Automatic window choice** for the menu bar: the five-hour window when your
+  plan returns one, otherwise the weekly window, otherwise the most constrained
+  window. A window you pick explicitly in Settings always wins.
+- Six menu bar styles: concentric rings, bar beside percentage, bar below
+  percentage, dual compact bars, percentage-only, and progress-only.
+- **Popover** listing every returned quota window with remaining-quota and
+  remaining-time bars, reset countdowns, and an on-pace/over-pace indicator.
+- **Decrease flash** — when fresh quota drops, only the changed percentage
+  digits turn red for half a second and fade back over two seconds; the percent
+  sign keeps its normal color. Reduced Motion restores the color instantly.
+- **Popover customization** — show or hide each quota window and choose which
+  one drives the menu bar indicator. The GPT-Reserve weekly bucket starts
+  hidden. Hidden windows keep refreshing.
+- **Refresh behavior** — at launch, about once a minute in the background,
+  whenever the popover opens, and on manual request. A failed refresh keeps the
+  last snapshot and marks it stale; requests never overlap.
+- **Launch at login**, Light/Dark/system appearance, and
+  English / 简体中文 / 繁體中文 localization.
+- **Optional platform connections** — DeepSeek balance and experimental MiniMax
+  plan quota, selected instead of Codex from the popover header.
+- **Developer options** — live menu bar appearance tuning with preview,
+  deterministic quota-state presets, custom quota/time sliders, JSON export, a
+  v9.9.9 update-state preview, and a one-click reset to the accepted defaults.
+- **Sparkle-based updates** — daily checks, EdDSA-signed archives, one-click
+  download/install/relaunch, and an opt-in automatic-install preference.
 
-## How It Works
+## Quick Start
 
-Changed digits in the menu bar percentage briefly turn red when quota decreases,
-hold red for half a second, then smoothly fade back over two seconds; the percent sign keeps its normal color.
-
-CodexMeter launches the locally installed Codex CLI as:
-
-```text
-codex app-server --listen stdio://
-```
-
-It then communicates with App Server using newline-delimited JSON-RPC messages:
-
-1. Initialize the local App Server connection.
-2. Read account metadata with `account/read`.
-3. Read ChatGPT rate-limit windows with `account/rateLimits/read`.
-4. Read optional banked-reset availability from the same rate-limit response.
-5. Optionally read token activity with `account/usage/read` when supported.
-6. Record successful quota snapshots and token summaries in account-separated
-   local SQLite partitions. ChatGPT accounts use a salted, one-way local key;
-   account email and authentication data are never stored.
-7. Refresh when `account/updated` or `account/rateLimits/updated` is received.
-8. Recover a stale authentication session by restarting only the local App
-   Server child process once.
-9. Calculate remaining quota, remaining time, consumption pace, and eligible
-   history estimates locally.
-
-CodexMeter does not scrape ChatGPT pages, read Codex authentication files, or
-store access tokens. Authentication and token refresh remain owned by Codex.
-
-Codex App Server is currently an experimental interface intended for local
-development and debugging, so future Codex releases may require compatibility
-updates. See the official [Codex App Server documentation](https://learn.chatgpt.com/docs/app-server).
-
-## Requirements
+### Requirements
 
 - macOS 13 or later.
-- Xcode 27 beta or later when building the current project from source.
-- A locally installed Codex CLI.
-- A working Codex login.
+- A ChatGPT (Codex-capable) account.
+- Xcode with support for this project, when building from source.
+- For optional platform connections: the corresponding API key.
 
-Install and sign in to Codex CLI if needed:
-
-```bash
-npm install -g @openai/codex
-codex login
-```
-
-CodexMeter currently discovers `codex` in these locations:
-
-```text
-~/.local/bin/codex
-/opt/homebrew/bin/codex
-/usr/local/bin/codex
-~/.npm-global/bin/codex
-~/.nvm/versions/node/*/bin/codex
-```
-
-## Build and Run
-
-Clone the repository:
+### Build and Run
 
 ```bash
-git clone git@github.com:raycalrui/CodexMeter.git
+git clone https://github.com/raycalrui/CodexMeter.git
 cd CodexMeter
 open CodexMeter.xcodeproj
 ```
 
-In Xcode:
+1. Select the `CodexMeter` scheme and **My Mac** as the destination.
+2. Press **Run**.
+3. CodexMeter is menu-bar-only (no Dock icon). Open its popover and choose
+   **Sign In with ChatGPT…**, then finish the flow in your browser.
 
-1. Select the `CodexMeter` scheme.
-2. Select **My Mac** as the destination.
-3. Press **Run**.
+### Download
 
-CodexMeter is a menu-bar-only app, so it does not appear in the Dock. Look for
-the quota indicator in the macOS menu bar after launch.
+Download `CodexMeter-1.6.3.dmg` from the
+[GitHub Releases](https://github.com/raycalrui/CodexMeter/releases) page and
+drag the app into Applications. The archive is ad-hoc signed and not
+notarized, so macOS may block the first launch: Control-click the app, choose
+**Open**, and confirm once.
 
-## Download and Install
+## How It Works
 
-Download `CodexMeter-1.6.3.dmg` from the GitHub Releases page, open it, and drag
-CodexMeter into the Applications folder.
+### Codex direct sign-in
 
-The downloadable build uses an ad-hoc signature and is not notarized. On first
-launch, macOS may block it. Control-click CodexMeter in Applications, choose
-**Open**, and confirm once. A Developer ID certificate and Apple notarization
-are planned for a future distribution build.
+CodexMeter has exactly one Codex source: an explicit device-code sign-in.
 
-## Automatic Updates
+1. The app requests a device code from OpenAI and opens
+   `auth.openai.com/codex/device` in your browser with the code on your
+   clipboard.
+2. You sign in with your ChatGPT account and confirm the code.
+3. CodexMeter exchanges the authorization for tokens and starts polling the
+   same `wham/usage` quota endpoint the official clients use, about once per
+   minute plus on popover opening and manual refresh.
 
-Starting with version 1.3.0, CodexMeter uses
-[Sparkle](https://sparkle-project.org/) to download, verify, replace, and
-relaunch the app. Every update archive is signed with a separate EdDSA key, so
-this works with the existing ad-hoc app signature and does not require a paid
-Apple Developer account. The private EdDSA key remains in the maintainer's
-login Keychain and is never stored in the repository or bundled in the app.
+Credential handling:
 
-Version 1.2.1 does not contain Sparkle, so upgrading from 1.2.1 to 1.3.0 still
-requires downloading the DMG manually. Once 1.3.0 is installed, later signed
-updates can be installed inside CodexMeter. Because the app is not notarized,
-macOS may still show Gatekeeper warnings on a new installation or after an
-update; Sparkle does not replace Apple notarization.
+- Only the refresh credential is persisted, in CodexMeter's own Keychain item
+  (`com.codexmeter.codex-oauth.v1`, this-device-only accessibility).
+- Access tokens live in memory alone and are never written to disk.
+- A rotated refresh credential is persisted **before** the new access token is
+  used, so an interrupted rotation cannot strand the sign-in.
+- A rejected refresh drops the dead credential and returns to the sign-in
+  state; **Disconnect** in Settings removes the stored credential.
+- Quota is display-only: there is no local usage database, history, token
+  counting, notification, or export chain behind it.
+- The OAuth and quota endpoints are undocumented and experimental; they may
+  change without notice.
+
+CodexMeter does not scrape ChatGPT web pages and never reads Codex
+authentication files such as the CLI's `auth.json`.
+
+### Menu bar indicator
+
+The automatic selection shows the **five-hour window** when the account
+returns one, falls back to the **weekly window**, and only uses the most
+constrained window for unknown quota shapes. You can pin any returned window
+in Settings → Menu Bar & Popover; that choice persists even when another
+window becomes lower.
+
+### External platform connections (source builds)
+
+Settings → Platforms & Connections adds DeepSeek or MiniMax with a
+user-supplied API key and an explicit region. Selecting a connection in the
+popover header replaces the Codex view; no selection shows Codex. Enabled
+connections poll independently every five minutes and support manual refresh.
+Changing a key or region starts a new connection identity and clears its
+displayed snapshot; renaming does not.
+
+- **DeepSeek** uses the official `GET /user/balance` endpoint at
+  `api.deepseek.com`. Balances stay separate by currency and are shown as
+  money without inventing quota percentages or reset times.
+- **MiniMax** is experimental. Its `GET /v1/token_plan/remains` adapter
+  follows the pinned first-party MiniMax CLI contract via `api.minimax.cn`
+  (China) and `api.minimax.io` (global). Weekly boosts can push the
+  base-equivalent percentage above 100%, so progress and pace use the
+  normalized capacity of the current plan. Missing fields are shown as
+  unavailable, never zero. The adapter has fixture coverage but has not been
+  validated against a live account.
+
+External API keys are saved only in CodexMeter's own Keychain namespace;
+automatic reads never trigger Keychain prompts. No inference traffic passes
+through CodexMeter.
+
+## Settings
+
+The menu-bar **Settings** entry opens one resizable window with:
+
+| Category | Contents |
+| --- | --- |
+| General | Language, appearance, launch at login, Codex account (sign-in / disconnect) |
+| Platforms & Connections | DeepSeek / MiniMax API keys and regions |
+| Menu Bar & Popover | Menu bar style, per-window popover visibility, indicator source window |
+| Developer | Appearance tuning, preview presets, update-state preview |
+| About | Version, update channel and checks, repository, privacy, license |
+
+## Privacy and Security
+
+- Codex quota is read over HTTPS from `wham/usage` after an explicit
+  device-code sign-in, using an ephemeral URL session with redirects disabled,
+  a 20-second timeout, and a 512 KiB response cap.
+- CodexMeter does not read Codex authentication files and never scrapes ChatGPT
+  web pages.
+- Only the OAuth refresh credential is persisted, inside CodexMeter's own
+  Keychain item. Access tokens stay in memory; Disconnect removes the
+  credential.
+- No local usage database is kept. The app stores only user preferences.
+- External connection API keys live in CodexMeter's own Keychain namespace.
+- Errors are locally authored messages; raw server errors and exception
+  details are never displayed.
+- Account email addresses, tokens, and raw authentication responses are never
+  logged.
+- In-app updates require Sparkle 2.9.6 or later and keep HTTPS transport and
+  EdDSA archive verification.
+- No analytics or tracking.
+
+App Sandbox is currently disabled for historical reasons (the removed App
+Server child process) and can be revisited before any Mac App Store
+distribution.
+
+## Known Limitations
+
+- The direct sign-in uses undocumented OpenAI OAuth and quota endpoints; it may
+  stop working if those endpoints change.
+- Provider adapters have fixture coverage only and have not been validated
+  against live DeepSeek or MiniMax accounts.
+- Launch-at-login behavior must be tested with a signed build.
+- The downloadable DMG is ad-hoc signed and not notarized, so first launch may
+  require Control-click → **Open**.
 
 ## Development
 
@@ -233,29 +220,28 @@ Run the core unit tests:
 
 ```bash
 swift test
+git diff --check
 ```
 
-If Command Line Tools is selected instead of the full Xcode installation, set
-`DEVELOPER_DIR` before running either command.
+If `xcode-select` points at Command Line Tools instead of full Xcode, set
+`DEVELOPER_DIR` before either command.
 
-Pure quota, time, pacing, history, migration, and semantic-version logic lives
-under `CodexMeter/Core`. `Package.swift` exposes only that directory to Swift
-Package Manager so the core logic can be tested independently of the macOS UI.
+Pure quota math, OAuth protocol, provider adapters, popover configuration, and
+semantic-version logic live under `CodexMeter/Core`. `Package.swift` exposes
+only that directory to Swift Package Manager so the core stays testable
+independently of the macOS UI. See [AGENTS.md](AGENTS.md) for the full
+architecture and verification checklist.
 
 ### Publishing a Sparkle update
 
-After building the unsigned Release app, re-sign the embedded Sparkle framework
-and then the outer app bundle. This order is required because Xcode removes
-development headers while embedding the framework:
+After building the Release app, re-sign the embedded Sparkle framework and the
+outer bundle in that order:
 
 ```bash
 Scripts/sign_ad_hoc_release.sh /path/to/CodexMeter.app
 ```
 
-Create the release DMG from that verified app. Then use Sparkle's bundled
-`generate_appcast` utility. The helper below reads the private EdDSA key from
-the login Keychain, signs the archive metadata, and updates the repository's
-`appcast.xml`:
+Create the DMG from the verified app, then generate and sign the appcast:
 
 ```bash
 Scripts/prepare_sparkle_update.sh \
@@ -264,93 +250,22 @@ Scripts/prepare_sparkle_update.sh \
   /path/to/Sparkle/bin
 ```
 
-For a prerelease, pass `beta` as the fourth argument. Upload the exact signed
-DMG to the matching GitHub Release, commit and push the generated
-`appcast.xml`, then verify its download URL before announcing the release.
-
-See [AGENTS.md](AGENTS.md) for the project architecture, product rules,
-verification checklist, and planned developer customization options.
-
-## Privacy and Security
-
-- CodexMeter communicates with a local Codex process over stdio.
-- It does not copy or persist Codex access tokens.
-- It does not read Codex authentication files directly.
-- It does not log account email addresses or raw authentication responses.
-- App Server errors use locally authored messages instead of displaying raw
-  server errors or system exception details that could contain private data.
-- App Server output is read in bounded chunks. A response line over 1 MiB stops
-  the child connection and marks the last successful quota as stale; a manual
-  or scheduled refresh can reconnect. Diagnostic stderr stays in an 8 KiB
-  in-memory tail and is never displayed verbatim.
-- In-app updates require Sparkle 2.9.6 or later and retain HTTPS transport and
-  EdDSA archive verification.
-- It separates ChatGPT account history with a salted SHA-256 key derived
-  locally from the account type and normalized email. Neither the email nor
-  this internal key is included in CSV exports.
-- It does not add its own analytics or tracking.
-- Usage history is stored only in
-  `~/Library/Application Support/CodexMeter/UsageHistory.sqlite` and can be
-  exported or cleared by the user.
-
-App Sandbox is currently disabled because CodexMeter must launch the user's
-local Codex executable. This should be reviewed deliberately before any future
-Mac App Store distribution.
-
-## Full history backup and restore
-
-The menu-bar **Settings** entry opens one resizable window with four categories:
-General, Menu Bar & Popover, History & Backup, and Developer, followed by About.
-Existing preferences are preserved. About/update information opens in the same
-settings window; Usage History remains a separate window.
-
-Open **Settings → History & Backup → Backup & Restore** to export a `.codexmeterbackup` file.
-It includes all retained quota and token history across accounts, database
-metadata, and the local identity salt needed to match accounts on another Mac.
-It does not contain login credentials, email addresses, or app preferences.
-Keep this file private. Previously deleted or retention-pruned records cannot
-be recovered. CSV remains a separate readable export format.
-
-Restore replaces all local history after confirmation. CodexMeter validates the
-archive version, SHA-256 checksum, database integrity, schema, and row counts,
-then saves the existing history in `~/Library/Application Support/CodexMeter/Backups`.
-Quit and reopen the app after restoring; history writes pause until then.
-Your existing retention preference applies after reopening. An interrupted
-restore is rolled back before account activation at the next launch.
-Backups larger than 512 MiB are currently unsupported.
-
-## Known Limitations
-
-- Codex App Server is experimental and may change without notice.
-- Codex executable discovery uses common stable install locations and installed
-  NVM Node versions rather than the interactive shell's `PATH`.
-- Notification and launch-at-login behavior must be tested with a signed build.
-- Token activity is optional and may be unavailable for API-key, Bedrock, or
-  other account types even when quota windows are available.
-- Banked-reset availability is account-dependent. Older App Server versions or
-  unsupported accounts may omit it; CodexMeter does not treat omission as a
-  confirmed zero balance.
-- Codex currently provides no stable identifier for API-key and Bedrock
-  accounts. CodexMeter therefore cannot restore separate historical profiles
-  when switching back and forth between multiple credentials of those types;
-  their anonymous history partition is reset on an explicit account change.
-- The downloadable DMG is ad-hoc signed, not notarized, and not prepared for
-  the Mac App Store, so first launch may require Control-clicking the app and
-  choosing **Open**.
+Pass `beta` as the fourth argument for a prerelease. Upload the exact signed
+DMG to the matching GitHub Release, commit and push the regenerated
+`appcast.xml`, and verify its download URL before announcing.
 
 ## Contributing
 
-Issues and pull requests are welcome.
-
-Before submitting a change:
+Issues and pull requests are welcome. Before submitting a change:
 
 ```bash
 swift test
 git diff --check
 ```
 
-For menu bar or popover changes, also launch exactly one signed app instance and
-perform a UI smoke test.
+Menu bar or popover changes additionally need a UI smoke test: launch exactly
+one signed app instance, click the status item, and confirm the popover opens
+and responds.
 
 ## License
 
@@ -358,6 +273,5 @@ CodexMeter is available under the [MIT License](LICENSE).
 
 ## Disclaimer
 
-Codex and OpenAI are trademarks of OpenAI. This project is provided as an
-independent utility and may stop working when upstream experimental interfaces
-change.
+Codex and OpenAI are trademarks of OpenAI. This project is an independent
+utility and may stop working when upstream experimental interfaces change.
