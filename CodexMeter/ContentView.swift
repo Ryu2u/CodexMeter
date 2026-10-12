@@ -144,7 +144,7 @@ struct ContentView: View {
                     if selectedConnection != nil {
                         providers.refreshSelected()
                     } else {
-                        oauth.refresh()
+                        oauth.refresh(reauthorizing: true)
                     }
                 } label: {
                     Image(systemName: "arrow.clockwise")

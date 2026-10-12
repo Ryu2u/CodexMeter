@@ -123,8 +123,23 @@ final class CodexOAuthUsageService: ObservableObject {
         errorMessage = nil
     }
 
-    func refresh() {
-        guard enabled, isConnected, operation == nil else { return }
+    func refresh(reauthorizing: Bool = false) {
+        guard enabled, operation == nil else { return }
+        if !isConnected {
+            // A denied prompt or a rebuild's new ad-hoc signature can make the
+            // stored credential unreadable. Only an explicit user action may
+            // retry the read, so the system prompt reappears without a full
+            // sign-in; automatic timers must never loop the password dialog.
+            guard reauthorizing else { return }
+            do {
+                guard try readRefreshToken() != nil else { return }
+                isConnected = true
+                errorMessage = nil
+            } catch {
+                errorMessage = L10n.string("oauth.storage_error")
+                return
+            }
+        }
         isBusy = true
         let current = generation
         operation = Task {
@@ -256,16 +271,20 @@ final class CodexOAuthUsageService: ObservableObject {
     private func saveRefreshToken(_ token: String) throws {
         guard !token.isEmpty else { throw OAuthLocalError.missingCredential }
         let data = Data(token.utf8)
-        let status = SecItemUpdate(keychainQuery as CFDictionary,
-                                   [kSecValueData as String: data] as CFDictionary)
-        if status == errSecItemNotFound {
-            var query = keychainQuery
-            query[kSecValueData as String] = data
-            query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-            guard SecItemAdd(query as CFDictionary, nil) == errSecSuccess else {
-                throw OAuthLocalError.missingCredential
-            }
-        } else if status != errSecSuccess {
+        let updateStatus = SecItemUpdate(keychainQuery as CFDictionary,
+                                         [kSecValueData as String: data] as CFDictionary)
+        if updateStatus == errSecSuccess { return }
+        // A rebuild's ad-hoc signature loses the old item's access list, so an
+        // denied update leaves an orphan owned by a previous build. The caller
+        // holds a fresh valid credential here; replace the orphan with an item
+        // owned by this build instead of failing the sign-in.
+        if updateStatus != errSecItemNotFound {
+            SecItemDelete(keychainQuery as CFDictionary)
+        }
+        var query = keychainQuery
+        query[kSecValueData as String] = data
+        query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        guard SecItemAdd(query as CFDictionary, nil) == errSecSuccess else {
             throw OAuthLocalError.missingCredential
         }
     }
