@@ -8,8 +8,7 @@ remaining Codex account quota without requiring the user to open Codex.
 - Support macOS 13 or later.
 - Keep the app menu-bar-only; do not add a normal window or Dock icon unless the
   product direction changes.
-- Prefer Apple frameworks. Sparkle is the deliberate exception used for signed
-  in-app updates without requiring an Apple Developer account.
+- Prefer Apple frameworks.
 - Make focused changes and preserve the existing architecture.
 
 ## Version baseline
@@ -47,7 +46,7 @@ has changed.
 ## Architecture
 
 - `CodexMeterApp.swift` owns the `MenuBarExtra`, the shared settings object, the
-  OAuth quota service, the update checker, and the provider coordinator.
+  OAuth quota service and the provider coordinator.
 - `ContentView.swift` renders quota details and user actions.
   Its quota and time progress bars use the same configurable status and time
   colors as the menu bar indicator. Render each returned quota window from the
@@ -102,21 +101,14 @@ has changed.
   in the popover. Monetary balances use text rather than quota rings. With no
   connection selected, the popover shows the Codex sign-in state or quota.
 - Debug-only --provider-ui-fixture uses in-memory external credentials and
-  transport with visibly identified sample data. The OAuth service and
-  automatic updates stay disabled in this mode. The additional
-  --provider-ui-fixture-settings argument opens the actual settings scene for
-  isolated UI checks; it has no effect without the Debug fixture flag.
+  transport with visibly identified sample data. The OAuth service stays
+  disabled in this mode. The additional --provider-ui-fixture-settings argument
+  opens the actual settings scene for isolated UI checks; it has no effect
+  without the Debug fixture flag.
 - `Core/QuotaModels.swift` contains pure quota, remaining-time, and consumption-
   pace calculations shared with the Swift Package unit tests.
-- `Core/SemanticVersion.swift` contains testable semantic-version logic shared
-  with the unit tests.
-- `UpdateChecker.swift` adapts Sparkle's standard updater to app state, stable
-  and beta channels, manual checks, and the automatic-install preference.
-  Sparkle owns the daily schedule, signed download, replacement, and relaunch.
-  `AboutView.swift` presents version/build, update channel, automatic-install
-  preference, repository, privacy, and license status.
-- Developer Options provide a temporary v9.9.9 update-state preview. This
-  fixture must not change live quota or survive as real release state.
+- `AboutView.swift` reads the installed version and build directly from
+  `Bundle.main` and presents repository, privacy, and license information.
 - `Core/MenuBarAppearance.swift` contains bounded, codable appearance values and
   deterministic developer preview fixtures, including custom quota/time values.
   `DeveloperOptionsView.swift` provides live appearance tuning without touching
@@ -141,7 +133,7 @@ has changed.
   inline. The General category hosts the Codex account row: sign-in, the
   pending device code with copy/open/cancel, and the connected state with an
   explicit disconnect. About is the final sidebar category and embeds
-  About/update content in the settings detail pane.
+  About content in the settings detail pane.
 - `AppSettings.swift` persists in-app language, app appearance, menu bar,
   popover content, launch-at-login, and separately namespaced developer
   preferences. App appearance defaults to following the system and may be
@@ -217,26 +209,21 @@ Keychain.
   because no valid Apple signing identity was available at release time. Do not
   describe it as Apple Development or Developer ID signed. Replace this with a
   Developer ID and notarized workflow before claiming frictionless distribution.
-- Sparkle's EdDSA signature authenticates update archives independently of the
-  app's ad-hoc code signature. It does not notarize the app or remove Gatekeeper
-  warnings.
 - Keep the deployment target at macOS 13 unless a new API requires a later OS.
 
-## Update rules
+## Distribution rules
 
-- Use Sparkle's HTTPS appcast and EdDSA verification for every downloadable
-  update. Require Sparkle 2.9.6 or later for its security fixes.
-  Keep the public key in `Config/CodexMeter-Info.plist` and the private
-  key only in the maintainer's login Keychain. Check daily, keep stable as the
-  default channel, and use `beta` only when prereleases are enabled. Automatic
-  download and installation must remain an explicit user preference.
-- Generate release entries with `Scripts/prepare_sparkle_update.sh`, upload the
-  exact signed archive to the matching GitHub Release, and verify the appcast's
-  URL and signature before publishing. Version 1.2.1 cannot self-update to
-  1.3.0; the first Sparkle-enabled upgrade remains a manual DMG installation.
+- Built-in update checking, download, installation, update preferences, and
+  update-state previews have been removed. Keep upgrades manual: users download
+  a published installer from GitHub Releases, quit CodexMeter, and replace the
+  installed app. Source changes do not imply a new release has been published.
 - For ad-hoc releases, run `Scripts/sign_ad_hoc_release.sh` on the built app
-  before creating the DMG. It re-signs the stripped embedded Sparkle framework
-  before signing and strictly verifying the outer app bundle.
+  before creating the DMG. It signs and strictly verifies the app bundle.
+- Every rebuild changes the ad-hoc signature, so macOS Keychain treats each
+  build as a new program and may prompt for login-password authorization when
+  the OAuth refresh credential is first read. This is expected; approve once,
+  or sign out and back in to re-home the credential with the current build. A
+  stable signing identity removes the prompt permanently.
 
 ## Roadmap / TODO
 
@@ -255,18 +242,14 @@ Keychain.
   platform sources from the integration plan.
 - [ ] Revisit App Sandbox before any Mac App Store distribution.
 
-- [x] Add update checking against the project's GitHub Releases. Provide a
-  manual **Check for Updates** action and daily checks. Use Sparkle's EdDSA-
-  signed appcast for one-click download, installation, and relaunch. Ignore
-  prereleases unless explicitly enabled, keep the current version usable when
-  checks fail, and offer automatic download/install only as an explicit user
-  preference. Keep Apple notarization as a separate future distribution step.
+- [x] Remove the built-in update chain and keep upgrades as manual downloads
+  and app replacement through GitHub Releases. Keep Apple notarization as a
+  separate future distribution step.
 
 - [x] Add an **About CodexMeter** page that shows the installed version and
-  build number, GitHub repository link, update-check action, stable/prerelease
-  update-channel preference, concise privacy explanation, and open-source
-  license information. Keep account identity and authentication details out of
-  this page.
+  build number, GitHub repository link, concise privacy explanation, and
+  open-source license information. Keep account identity and authentication
+  details out of this page.
 
 - [x] Add an expandable Developer Options section for live menu bar appearance
   tuning. Persist experimental values separately from normal user preferences
@@ -375,7 +358,7 @@ Keychain.
 
 - [x] Make the entire Settings row open one categorized settings window.
   Consolidate general, provider, menu-bar/popover, and developer controls while
-  preserving existing preference keys and values. Embed About/update
+  preserving existing preference keys and values. Embed About
   information as the final sidebar category.
 - [x] Add a lightweight periodic refresh and visibly mark stale data when the
   Codex source is unavailable.

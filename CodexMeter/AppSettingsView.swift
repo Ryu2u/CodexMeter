@@ -3,7 +3,6 @@ import SwiftUI
 /// Shares existing settings objects so reorganizing controls never migrates preferences.
 struct AppSettingsView: View {
     @ObservedObject var settings: AppSettings
-    @ObservedObject var updateChecker: UpdateChecker
     @ObservedObject var providers: ProviderUsageCoordinator
     @ObservedObject var oauth: CodexOAuthUsageService
     @State private var selection: String? = "settings.category.general"
@@ -33,9 +32,9 @@ struct AppSettingsView: View {
                 case "settings.category.menu":
                     PopoverCustomizationView(oauth: oauth, settings: settings)
                 case "developer.title":
-                    DeveloperOptionsView(settings: settings, updateChecker: updateChecker, embedded: true)
+                    DeveloperOptionsView(settings: settings, embedded: true)
                 case "about.title":
-                    AboutView(settings: settings, updateChecker: updateChecker, embedded: true)
+                    AboutView(embedded: true)
                 default:
                     generalSettings
                 }

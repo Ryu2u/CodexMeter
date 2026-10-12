@@ -140,10 +140,6 @@ final class AppSettings: ObservableObject {
         }
     }
 
-    @Published var includePrereleaseUpdates: Bool {
-        didSet { defaults.set(includePrereleaseUpdates, forKey: Keys.includePrereleaseUpdates) }
-    }
-
     @Published var developerAppearance: MenuBarAppearance {
         didSet {
             let normalized = developerAppearance.normalized()
@@ -194,7 +190,6 @@ final class AppSettings: ObservableObject {
         static let language = "language"
         static let menuBarStyle = "menuBarStyle"
         static let popoverContent = "popover.contentConfiguration"
-        static let includePrereleaseUpdates = "updates.includePrereleases"
         static let developerAppearance = "developer.appearance"
         static let developerAppearanceDefaultsVersion = "developer.appearanceDefaultsVersion"
         static let developerPreviewEnabled = "developer.previewEnabled"
@@ -223,7 +218,6 @@ final class AppSettings: ObservableObject {
         } else {
             popoverContent = .defaultValue
         }
-        includePrereleaseUpdates = defaults.bool(forKey: Keys.includePrereleaseUpdates)
         let appearanceDefaultsVersion = defaults.integer(
             forKey: Keys.developerAppearanceDefaultsVersion
         )

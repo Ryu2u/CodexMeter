@@ -2,12 +2,18 @@ import AppKit
 import SwiftUI
 
 struct AboutView: View {
-    @ObservedObject var settings: AppSettings
-    @ObservedObject var updateChecker: UpdateChecker
     var embedded = false
     @Environment(\.dismiss) private var dismiss
 
     private let repositoryURL = URL(string: "https://github.com/raycalrui/CodexMeter")!
+
+    private var installedVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
+    }
+
+    private var installedBuild: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0"
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -19,7 +25,6 @@ struct AboutView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     identitySection
-                    updateSection
                     privacySection
                     licenseSection
                 }
@@ -49,8 +54,8 @@ struct AboutView: View {
                     Text("CodexMeter").font(.title2.weight(.semibold))
                     Text(L10n.format(
                         "about.version_format",
-                        updateChecker.installedVersion,
-                        updateChecker.installedBuild
+                        installedVersion,
+                        installedBuild
                     ))
                     .foregroundStyle(.secondary)
                     Link(destination: repositoryURL) {
@@ -60,105 +65,6 @@ struct AboutView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 4)
-        }
-    }
-
-    private var updateSection: some View {
-        GroupBox(L10n.string("updates.title")) {
-            VStack(alignment: .leading, spacing: 10) {
-                Toggle(
-                    L10n.string("updates.include_prereleases"),
-                    isOn: Binding(
-                        get: { settings.includePrereleaseUpdates },
-                        set: { includePrereleases in
-                            settings.includePrereleaseUpdates = includePrereleases
-                            updateChecker.setIncludesPrereleases(includePrereleases)
-                        }
-                    )
-                )
-
-                Toggle(
-                    L10n.string("updates.automatic_install"),
-                    isOn: Binding(
-                        get: { updateChecker.automaticallyInstallsUpdates },
-                        set: { updateChecker.setAutomaticallyInstallsUpdates($0) }
-                    )
-                )
-                .disabled(!updateChecker.allowsAutomaticUpdates)
-
-                updateStatus
-
-                Button {
-                    updateChecker.check(
-                        includePrereleases: settings.includePrereleaseUpdates
-                    )
-                } label: {
-                    if updateChecker.state == .checking {
-                        HStack {
-                            ProgressView().controlSize(.small)
-                            Text(L10n.string("updates.checking"))
-                        }
-                    } else {
-                        Text(L10n.string("updates.check"))
-                    }
-                }
-                .disabled(!updateChecker.canCheckForUpdates)
-            }
-            .padding(.top, 6)
-        }
-        .onAppear {
-            updateChecker.refreshPreferences()
-        }
-    }
-
-    @ViewBuilder
-    private var updateStatus: some View {
-        switch updateChecker.state {
-        case .idle:
-            Text(L10n.string("updates.not_checked"))
-                .foregroundStyle(.secondary)
-        case .checking:
-            Text(L10n.string("updates.checking"))
-                .foregroundStyle(.secondary)
-        case .upToDate:
-            Label(L10n.string("updates.up_to_date"), systemImage: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-        case .failed(let message):
-            VStack(alignment: .leading, spacing: 4) {
-                Label(L10n.string("updates.failed"), systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
-                Text(message)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-            }
-        case .updateAvailable(let release):
-            VStack(alignment: .leading, spacing: 8) {
-                Label(
-                    L10n.format("updates.available_format", release.version),
-                    systemImage: "arrow.down.circle.fill"
-                )
-                .foregroundStyle(.blue)
-
-                if let notes = release.releaseNotes, !notes.isEmpty {
-                    Text(notes)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(8)
-                        .textSelection(.enabled)
-                }
-
-                Button(L10n.string("updates.install")) {
-                    updateChecker.check(
-                        includePrereleases: settings.includePrereleaseUpdates
-                    )
-                }
-
-                Link(
-                    L10n.string("updates.open_release"),
-                    destination: release.releasePageURL
-                )
-            }
         }
     }
 

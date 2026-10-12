@@ -10,23 +10,17 @@ enum CodexMeterWindowID {
 struct CodexMeterApp: App {
     @StateObject private var settings: AppSettings
     @StateObject private var oauth: CodexOAuthUsageService
-    @StateObject private var updateChecker: UpdateChecker
     @StateObject private var providers: ProviderUsageCoordinator
 
     init() {
         // The service and settings UI must share one settings instance so
         // appearance and preview changes take effect immediately.
         let settings = AppSettings()
-        let updateChecker = UpdateChecker(
-            includePrereleases: settings.includePrereleaseUpdates,
-            startingUpdater: !ProviderUIFixture.isEnabled
-        )
         _settings = StateObject(wrappedValue: settings)
         let oauth = CodexOAuthUsageService(enabled: !ProviderUIFixture.isEnabled)
         _oauth = StateObject(wrappedValue: oauth)
         // Direct sign-in is the only Codex source, so polling always runs.
         oauth.start()
-        _updateChecker = StateObject(wrappedValue: updateChecker)
         let providers = ProviderUIFixture.makeCoordinator()
         _providers = StateObject(wrappedValue: providers)
         providers.start()
@@ -36,7 +30,6 @@ struct CodexMeterApp: App {
         MenuBarExtra {
             ContentView(
                 settings: settings,
-                updateChecker: updateChecker,
                 providers: providers,
                 oauth: oauth
             )
@@ -63,7 +56,7 @@ struct CodexMeterApp: App {
         .menuBarExtraStyle(.window)
 
         Window("CodexMeter", id: CodexMeterWindowID.settings) {
-            AppSettingsView(settings: settings, updateChecker: updateChecker,
+            AppSettingsView(settings: settings,
                             providers: providers, oauth: oauth)
                 .appAppearance(settings.appearanceMode)
         }
@@ -71,7 +64,7 @@ struct CodexMeterApp: App {
         .windowResizability(.contentMinSize)
 
         Window("CodexMeter", id: CodexMeterWindowID.about) {
-            AboutView(settings: settings, updateChecker: updateChecker)
+            AboutView()
                 .appAppearance(settings.appearanceMode)
         }
         .defaultSize(width: 500, height: 620)

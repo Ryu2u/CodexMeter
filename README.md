@@ -53,10 +53,7 @@ CodexMeter 是一款原生 macOS 菜单栏应用，让你的 ChatGPT/Codex 用�
 - **可选平台连接**——DeepSeek 余额与实验性 MiniMax 套餐额度，在弹窗顶部
   选择后替代 Codex 显示。
 - **开发者选项**——实时菜单栏外观调节（带预览）、确定性额度状态预设、
-  自定义额度/时间滑块、JSON 配置导出、v9.9.9 更新状态预览，以及一键恢复
-  默认外观。
-- **基于 Sparkle 的更新**——每日检查、EdDSA 签名校验、一键下载/安装/
-  重启，自动安装为可选项。
+  自定义额度/时间滑块、JSON 配置导出，以及一键恢复默认外观。
 
 ## 快速开始
 
@@ -85,6 +82,9 @@ open CodexMeter.xcodeproj
 从 [GitHub Releases](https://github.com/Ryu2u/CodexMeter/releases) 下载
 `CodexMeter-1.6.3.dmg`，拖入"应用程序"文件夹。安装包为 ad-hoc 签名且未经
 公证，macOS 可能拦截首次启动：右键点击应用选择 **打开** 并确认一次即可。
+
+当前源码已移除内置更新。需要升级时，请到 GitHub Releases 查看已发布版本，
+手动下载安装包，退出 CodexMeter 后替换旧应用。
 
 ## 工作原理
 
@@ -147,8 +147,8 @@ Codex。已启用的连接每五分钟独立轮询，也支持手动刷新。修
 | 通用 | 语言、外观、登录时启动、Codex 账户（登录/断开连接） |
 | 平台与连接 | DeepSeek / MiniMax API 密钥与区域 |
 | 菜单栏与弹窗 | 菜单栏样式、各额度窗口可见性、指示器来源窗口 |
-| 开发者 | 外观调节、预览预设、更新状态预览 |
-| 关于 | 版本、更新通道与检查、仓库、隐私、许可证 |
+| 开发者 | 外观调节、额度预览预设 |
+| 关于 | 版本号、构建号、仓库、隐私、许可证 |
 
 ## 隐私与安全
 
@@ -162,8 +162,6 @@ Codex。已启用的连接每五分钟独立轮询，也支持手动刷新。修
 - 错误信息为本地编写的文案，绝不显示可能包含隐私数据的原始服务器错误或
   系统异常详情。
 - 绝不记录账号邮箱、令牌或原始认证响应。
-- 应用内更新要求 Sparkle 2.9.6 或更高版本，并保持 HTTPS 传输与 EdDSA
-  归档校验。
 - 无任何自主分析或追踪。
 
 App Sandbox 目前因历史原因（已移除的 App Server 子进程）保持禁用，可在
@@ -172,6 +170,8 @@ App Sandbox 目前因历史原因（已移除的 App Server 子进程）保持�
 ## 已知限制
 
 - 直接登录使用未公开的 OpenAI OAuth 与额度接口；接口变更可能导致失效。
+- 安装包为 ad-hoc 签名，更换或重新构建应用后，系统可能在首次读取登录凭据时
+  要求输入开机密码授权钥匙串访问，点"始终允许"或重新登录即可。
 - 平台适配器仅有测试覆盖，尚未在真实 DeepSeek 或 MiniMax 账号上验证。
 - 登录时启动功能需使用签名构建进行测试。
 - 可下载的 DMG 为 ad-hoc 签名且未经公证，首次启动可能需要右键 → **打开**。
@@ -200,31 +200,19 @@ git diff --check
 若 `xcode-select` 指向的是 Command Line Tools 而非完整 Xcode，请在执行
 上述命令前设置 `DEVELOPER_DIR`。
 
-纯额度计算、OAuth 协议、平台适配器、弹窗配置与语义版本逻辑位于
-`CodexMeter/Core`。`Package.swift` 仅将该目录暴露给 Swift Package Manager，
-使核心逻辑独立于 macOS UI 进行测试。完整架构与验证清单见
-[AGENTS.md](AGENTS.md)。
+纯额度计算、OAuth 协议、平台适配器与弹窗配置位于 `CodexMeter/Core`。
+`Package.swift` 仅将该目录暴露给 Swift Package Manager，使核心逻辑独立于
+macOS UI 进行测试。完整架构与验证清单见 [AGENTS.md](AGENTS.md)。
 
-### 发布 Sparkle 更新
+### 发布安装包
 
-构建 Release 应用后，按顺序重新签名内嵌 Sparkle 框架与外层应用包：
+构建 Release 应用后，签名并严格验证应用包：
 
 ```bash
 Scripts/sign_ad_hoc_release.sh /path/to/CodexMeter.app
 ```
 
-用校验过的应用制作 DMG，然后生成并签名 appcast：
-
-```bash
-Scripts/prepare_sparkle_update.sh \
-  v1.6.3 \
-  /path/to/CodexMeter-1.6.3.dmg \
-  /path/to/Sparkle/bin
-```
-
-预发布版本将 `beta` 作为第四个参数传入。将签好名的 DMG 原样上传到对应的
-GitHub Release，提交并推送重新生成的 `appcast.xml`，并在发布公告前核实其
-下载地址。
+用校验过的应用制作 DMG，并上传到对应的 GitHub Release。
 
 ## 参与贡献
 

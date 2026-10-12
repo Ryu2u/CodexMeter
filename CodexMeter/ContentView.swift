@@ -25,7 +25,6 @@ private struct ScrollOnlyPopoverIndicators: ViewModifier {
 
 struct ContentView: View {
     @ObservedObject var settings: AppSettings
-    @ObservedObject var updateChecker: UpdateChecker
     @ObservedObject var providers: ProviderUsageCoordinator
     @ObservedObject var oauth: CodexOAuthUsageService
     @Environment(\.openWindow) private var openWindow
@@ -101,10 +100,6 @@ struct ContentView: View {
                 staleBanner
             }
 
-            if case .updateAvailable(let release) = updateChecker.state {
-                updateBanner(release)
-            }
-
             Divider()
 
             if let connection = selectedConnection {
@@ -124,29 +119,6 @@ struct ContentView: View {
             footer
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func updateBanner(_ release: AvailableUpdate) -> some View {
-        Button {
-            openWindow(id: CodexMeterWindowID.about)
-            NSApplication.shared.activate(ignoringOtherApps: true)
-        } label: {
-            HStack {
-                Label(
-                    L10n.format("updates.available_format", release.version),
-                    systemImage: "arrow.down.circle.fill"
-                )
-                Spacer()
-                Image(systemName: "chevron.right")
-            }
-            .contentShape(Rectangle())
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(8)
-            .background(.blue.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
-        }
-        .buttonStyle(.plain)
-        .font(.caption)
-        .foregroundStyle(.blue)
     }
 
     private var header: some View {
