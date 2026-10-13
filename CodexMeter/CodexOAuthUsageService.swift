@@ -170,10 +170,9 @@ final class CodexOAuthUsageService: ObservableObject {
                 return
             } catch {
                 guard current == generation else { return }
-                if let error = error as? CodexOAuthError,
-                   error == .refreshTokenInvalid || error == .authentication {
-                    // The stored grant is no longer accepted; keep quota output empty
-                    // and require an explicit new sign-in rather than endless retries.
+                if let error = error as? CodexOAuthError, error == .refreshTokenInvalid {
+                    // The server declared this grant dead. Drop the credential
+                    // so the UI returns to the sign-in state.
                     try? deleteRefreshToken()
                     accessToken = nil
                     expiresAt = .distantPast
@@ -184,9 +183,12 @@ final class CodexOAuthUsageService: ObservableObject {
                     isStale = false
                     errorMessage = localizedError(error)
                 } else {
+                    // Environment failures (proxy exit blocked, network, rate
+                    // limit) keep the stored grant retryable: switching the
+                    // proxy off must recover without a new sign-in.
                     isStale = !windows.isEmpty
-                    errorMessage = localizedError(error)
                     accessToken = nil
+                    errorMessage = localizedError(error)
                 }
             }
             guard current == generation else { return }
@@ -241,7 +243,9 @@ final class CodexOAuthUsageService: ObservableObject {
         if let error = error as? CodexOAuthError {
             switch error {
             case .deviceCodeExpired: return L10n.string("oauth.expired")
-            case .authentication, .refreshTokenInvalid: return L10n.string("oauth.login_required")
+            // The grant stays stored on transient rejections, so the message
+            // asks for a retry rather than a new sign-in.
+            case .refreshTokenInvalid: return L10n.string("oauth.login_required")
             default: return L10n.string("oauth.request_error")
             }
         }

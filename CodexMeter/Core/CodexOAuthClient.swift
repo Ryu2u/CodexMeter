@@ -173,8 +173,16 @@ final class CodexOAuthClient: Sendable {
         }.joined(separator: "&").data(using: .utf8)!
         let response = try await send(url: url, method: "POST", body: body,
                                       contentType: "application/x-www-form-urlencoded")
-        if isRefresh && (response.status == 401 || response.status == 403 || Self.isInvalidRefresh(response.data)) {
-            throw CodexOAuthError.refreshTokenInvalid
+        if isRefresh {
+            // Only a body that declares the grant dead proves revocation. A
+            // bare 401/403 (proxy exit blocked, WAF page) is an environment
+            // failure and must keep the stored credential retryable.
+            if Self.isInvalidRefresh(response.data) || Self.isInvalidGrant(response.data) {
+                throw CodexOAuthError.refreshTokenInvalid
+            }
+            if response.status == 401 || response.status == 403 {
+                throw CodexOAuthError.authentication
+            }
         }
         try validate(response)
         let object = try Self.object(response.data)
@@ -262,6 +270,17 @@ final class CodexOAuthClient: Sendable {
             ?? error as? String ?? object["code"] as? String
         return ["refresh_token_expired", "refresh_token_reused", "refresh_token_invalidated"]
             .contains(code?.lowercased() ?? "")
+    }
+
+    /// RFC 6749 §5.2 reports an expired or revoked grant as `invalid_grant`,
+    /// either as the plain error string or nested under a code field.
+    private static func isInvalidGrant(_ data: Data) -> Bool {
+        guard let object = try? object(data) else { return false }
+        if let error = object["error"] as? String {
+            return error.lowercased() == "invalid_grant"
+        }
+        let code = (object["error"] as? [String: Any])?["code"] as? String
+        return code?.lowercased() == "invalid_grant"
     }
 
     static func decodeQuota(_ data: Data) throws -> CodexOAuthQuota {

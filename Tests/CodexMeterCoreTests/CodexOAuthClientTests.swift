@@ -107,6 +107,23 @@ final class CodexOAuthClientTests: XCTestCase {
         do { _ = try await invalid.refresh(refreshToken: "secret"); XCTFail() }
         catch { XCTAssertEqual(error as? CodexOAuthError, .refreshTokenInvalid) }
 
+        // Standard RFC 6749 invalid_grant also proves the grant dead.
+        let revoked = CodexOAuthClient(transport: OAuthStubTransport([
+            reply("/oauth/token", 401, #"{"error":"invalid_grant","error_description":"token expired"}"#)
+        ]))
+        do { _ = try await revoked.refresh(refreshToken: "secret"); XCTFail() }
+        catch { XCTAssertEqual(error as? CodexOAuthError, .refreshTokenInvalid) }
+
+        // A bare 401/403 (proxy exit block, WAF page) keeps the stored grant
+        // retryable instead of reporting it revoked.
+        for status in [401, 403] {
+            let blocked = CodexOAuthClient(transport: OAuthStubTransport([
+                reply("/oauth/token", status, "<html>blocked</html>")
+            ]))
+            do { _ = try await blocked.refresh(refreshToken: "secret"); XCTFail() }
+            catch { XCTAssertEqual(error as? CodexOAuthError, .authentication) }
+        }
+
         let tooLarge = CodexOAuthClient(transport: OAuthStubTransport([
             CodexOAuthHTTPResponse(status: 200, data: Data(count: CodexOAuthClient.maximumResponseBytes + 1),
                                    url: URL(string: "https://auth.openai.com/api/accounts/deviceauth/usercode")!)

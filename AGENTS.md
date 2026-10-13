@@ -76,8 +76,11 @@ has changed.
   refresh credential before using the new access token, and polls quota about
   once per minute plus on popover opening and manual request. Decoded windows
   reuse `CodexUsageWindow` presentation with duration-based localized titles. A
-  rejected refresh drops the dead credential and returns to the sign-in state; a
-  transport failure keeps the last snapshot and marks it stale. It stays
+  failed refresh drops the dead credential only when OpenAI's body declares
+  the grant dead (`invalid_grant` or the refresh-token-expired family); bare
+  401/403 rejections from proxies or WAFs keep the stored grant retryable so
+  toggling the proxy recovers without a new sign-in, and other transport
+  failures keep the last snapshot and mark it stale. It stays
   disabled under the Debug provider fixture, and `start()` is called
   unconditionally because no source switching exists.
 - `Core/CodexOAuthClient.swift` contains the pure device-code OAuth protocol and
