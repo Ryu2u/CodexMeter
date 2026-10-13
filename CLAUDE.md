@@ -77,8 +77,9 @@ Quota data flow (the app's core):
    independent five-minute polling and identity epochs. DeepSeek exposes
    currency balances; MiniMax and Zhipu plan quotas are experimental (Zhipu
    reads the GLM Coding plan windows from the bigmodel.cn console with a
-   pasted session JWT). When a connection is selected in the popover header
-   it replaces the Codex view.
+   pasted session JWT, resolving the default organization/project context
+   first because team-plan quota needs the console's org headers). When a
+   connection is selected in the popover header it replaces the Codex view.
 
 Other components: `AppSettings.swift` (UserDefaults-backed preferences),
 `Core/PopoverContentConfiguration.swift` (per-window popover visibility plus the

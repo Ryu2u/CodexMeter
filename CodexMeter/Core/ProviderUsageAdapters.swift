@@ -112,10 +112,25 @@ nonisolated enum ProviderUsageAdapter {
         URL(string: "https://bigmodel.cn/api/monitor/usage/quota/limit?type=\(quotaType)")!
     }
 
+    /// Console organization context. The web console resolves the customer's
+    /// default organization and project once, then attaches both IDs to every
+    /// authenticated API call; team-plan quota is only visible through that
+    /// organization context. Personal accounts answer without organizations
+    /// and keep the headerless quota request.
+    struct ZhipuConsoleContext: Sendable {
+        let organizationID: String?
+        let projectID: String?
+    }
+
+    private static func zhipuContextEndpoint() -> URL {
+        URL(string: "https://bigmodel.cn/api/biz/customer/getCustomerInfo")!
+    }
+
     static func request(
         for connection: ProviderConnection,
         key: String,
-        quotaType: Int = 2
+        quotaType: Int = 2,
+        zhipuContext: ZhipuConsoleContext? = nil
     ) throws -> URLRequest {
         if connection.kind == .zhipu {
             // The console API authenticates with the raw session JWT; a Bearer
@@ -131,6 +146,12 @@ nonisolated enum ProviderUsageAdapter {
         request.httpMethod = "GET"
         request.setValue(connection.kind == .zhipu ? key : "Bearer \(key)",
                          forHTTPHeaderField: "Authorization")
+        if let organizationID = zhipuContext?.organizationID {
+            request.setValue(organizationID, forHTTPHeaderField: "bigmodel-organization")
+        }
+        if let projectID = zhipuContext?.projectID {
+            request.setValue(projectID, forHTTPHeaderField: "bigmodel-project")
+        }
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         return request
@@ -145,7 +166,13 @@ nonisolated enum ProviderUsageAdapter {
         do {
             let requests: [URLRequest]
             if connection.kind == .zhipu {
-                requests = try [2, 1].map { try request(for: connection, key: key, quotaType: $0) }
+                // Team-plan quota is invisible without the organization
+                // context, so resolve it from the console before asking for
+                // quota; its auth failures already end this fetch.
+                let context = try await resolveZhipuContext(key: key, transport: transport, now: now)
+                requests = try [2, 1].map {
+                    try request(for: connection, key: key, quotaType: $0, zhipuContext: context)
+                }
             } else {
                 requests = [try request(for: connection, key: key)]
             }
@@ -179,12 +206,12 @@ nonisolated enum ProviderUsageAdapter {
         }
     }
 
-    private static func sendAndDecode(
+    /// Shared transport + origin + status handling; returns the body bytes.
+    private static func perform(
         request: URLRequest,
-        connection: ProviderConnection,
         transport: any ProviderUsageTransport,
         now: @Sendable () -> Date
-    ) async throws -> ProviderUsageSnapshot {
+    ) async throws -> Data {
         let response = try await transport.send(request)
         try Task.checkCancellation()
         guard let expectedURL = request.url, sameOrigin(expectedURL, response.url) else {
@@ -193,17 +220,75 @@ nonisolated enum ProviderUsageAdapter {
         guard response.data.count <= maximumResponseBytes else {
             throw ProviderUsageFailure(code: .responseTooLarge)
         }
-        let date = now()
         switch response.statusCode {
         case 200..<300: break
         case 401, 403: throw ProviderUsageFailure(code: .authentication)
         case 429:
             throw ProviderUsageFailure(code: .rateLimited,
-                                       retryAt: retryAfter(response.headers["retry-after"], at: date))
+                                       retryAt: retryAfter(response.headers["retry-after"], at: now()))
         case 500..<600: throw ProviderUsageFailure(code: .network)
         default: throw ProviderUsageFailure(code: .invalidResponse)
         }
-        return try decode(response.data, kind: connection.kind, fetchedAt: date)
+        return response.data
+    }
+
+    private static func sendAndDecode(
+        request: URLRequest,
+        connection: ProviderConnection,
+        transport: any ProviderUsageTransport,
+        now: @Sendable () -> Date
+    ) async throws -> ProviderUsageSnapshot {
+        let date = now()
+        let data = try await perform(request: request, transport: transport, now: now)
+        return try decode(data, kind: connection.kind, fetchedAt: date)
+    }
+
+    /// Reads the console customer info to find the default organization and
+    /// project the web console would scope quota requests with. Server-chosen
+    /// IDs are header-validated before use; missing organizations keep the
+    /// personal-scope headerless request.
+    private static func resolveZhipuContext(
+        key: String,
+        transport: any ProviderUsageTransport,
+        now: @Sendable () -> Date
+    ) async throws -> ZhipuConsoleContext {
+        var request = URLRequest(url: zhipuContextEndpoint(),
+                                 cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
+        request.httpMethod = "GET"
+        request.setValue(key, forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let data = try await perform(request: request, transport: transport, now: now)
+        guard let json = try? JSONSerialization.jsonObject(with: data),
+              let body = json as? [String: Any] else {
+            throw ProviderUsageFailure(code: .invalidResponse)
+        }
+        if let code = integer(body["code"]), code != 200 {
+            // 1001 is the console's "Authorization missing or rejected" code.
+            throw ProviderUsageFailure(
+                code: code == 401 || code == 403 || code == 1001 ? .authentication : .invalidResponse)
+        }
+        guard let payload = body["data"] as? [String: Any] else {
+            throw ProviderUsageFailure(code: .invalidResponse)
+        }
+        // Personal accounts answer without organizations; keep their quota
+        // request headerless instead of failing the fetch.
+        let organizations = payload["organizations"] as? [[String: Any]] ?? []
+        guard let organization = organizations.first(where: { $0["isDefault"] as? Bool == true })
+            ?? organizations.first else {
+            return ZhipuConsoleContext(organizationID: nil, projectID: nil)
+        }
+        let projects = organization["projects"] as? [[String: Any]] ?? []
+        let project = projects.first(where: { $0["isDefault"] as? Bool == true }) ?? projects.first
+        return ZhipuConsoleContext(
+            organizationID: safeHeaderValue(organization["organizationId"] as? String),
+            projectID: safeHeaderValue(project?["projectId"] as? String))
+    }
+
+    /// Header values come from server-controlled JSON; only accept printable
+    /// ASCII so a hostile value cannot inject header syntax.
+    private static func safeHeaderValue(_ value: String?) -> String? {
+        guard let value, validCredential(value) else { return nil }
+        return value
     }
 
     static func decode(_ data: Data, kind: ProviderKind, fetchedAt: Date) throws -> ProviderUsageSnapshot {

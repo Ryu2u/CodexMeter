@@ -291,6 +291,67 @@ final class ProviderUsageTests: XCTestCase {
                        "https://bigmodel.cn/api/monitor/usage/quota/limit?type=1")
     }
 
+    func testZhipuFetchResolvesDefaultOrganizationAndProjectForQuotaHeaders() async throws {
+        // The console scopes team-plan quota by organization; without the
+        // bigmodel-organization/bigmodel-project headers the quota endpoint
+        // answers for no plan. Protocol fixture, not a live verified account.
+        let transport = ZhipuConsoleTransport(contextBody: """
+        {"code":200,"msg":"ok","data":{"organizations":[
+          {"organizationId":"org-reader-fixture","isDefault":false,
+           "projects":[{"projectId":"proj-reader-fixture","isDefault":true}]},
+          {"organizationId":"org-default-fixture","isDefault":true,"projects":[
+            {"projectId":"proj-a-fixture","isDefault":false},
+            {"projectId":"proj-default-fixture","isDefault":true}]}
+        ]},"success":true}
+        """)
+        let snapshot = try await ProviderUsageAdapter.fetch(
+            connection: connection(.zhipu), key: "eyJhbGciOiJIUzUxMiJ9.a.b",
+            transport: transport, now: { date })
+        XCTAssertEqual(snapshot.buckets.map(\.id), ["zhipu:300"])
+        let paths = await transport.visitedPaths
+        XCTAssertEqual(paths, ["/api/biz/customer/getCustomerInfo", "/api/monitor/usage/quota/limit"])
+        let contextAuth = await transport.contextAuthorization
+        XCTAssertEqual(contextAuth, "eyJhbGciOiJIUzUxMiJ9.a.b")
+        let quotaHeaders = await transport.quotaHeaders
+        XCTAssertEqual(quotaHeaders.count, 1)
+        XCTAssertEqual(quotaHeaders[0]["bigmodel-organization"], "org-default-fixture")
+        XCTAssertEqual(quotaHeaders[0]["bigmodel-project"], "proj-default-fixture")
+        XCTAssertEqual(quotaHeaders[0]["Authorization"], "eyJhbGciOiJIUzUxMiJ9.a.b")
+    }
+
+    func testZhipuContextFailuresFailFastWithoutQuotaRequests() async throws {
+        // Business 1001 and bare 403 both mean the pasted session JWT is dead.
+        for transport in [
+            ZhipuConsoleTransport(contextBody: #"{"code":1001,"msg":"private","success":false}"#),
+            ZhipuConsoleTransport(contextStatus: 403, contextBody: #"{"msg":"private"}"#)
+        ] {
+            do {
+                _ = try await ProviderUsageAdapter.fetch(
+                    connection: connection(.zhipu), key: "eyJhbGciOiJIUzUxMiJ9.a.b",
+                    transport: transport, now: { date })
+                XCTFail("Expected an authentication failure")
+            } catch let error as ProviderUsageFailure {
+                XCTAssertEqual(error.code, .authentication)
+            }
+            let paths = await transport.visitedPaths
+            XCTAssertEqual(paths, ["/api/biz/customer/getCustomerInfo"])
+        }
+    }
+
+    func testZhipuPersonalAccountWithoutOrganizationsOmitsContextHeaders() async throws {
+        let transport = ZhipuConsoleTransport(contextBody: #"{"code":200,"data":{},"success":true}"#)
+        let snapshot = try await ProviderUsageAdapter.fetch(
+            connection: connection(.zhipu), key: "eyJhbGciOiJIUzUxMiJ9.a.b",
+            transport: transport, now: { date })
+        XCTAssertEqual(snapshot.buckets.map(\.id), ["zhipu:300"])
+        let paths = await transport.visitedPaths
+        XCTAssertEqual(paths, ["/api/biz/customer/getCustomerInfo", "/api/monitor/usage/quota/limit"])
+        let quotaHeaders = await transport.quotaHeaders
+        XCTAssertEqual(quotaHeaders.count, 1)
+        XCTAssertNil(quotaHeaders[0]["bigmodel-organization"])
+        XCTAssertNil(quotaHeaders[0]["bigmodel-project"])
+    }
+
     func testOfficialRegionsRequestsAndOriginPolicy() throws {
         let cn = try ProviderUsageAdapter.request(for: connection(.miniMax, region: .china), key: "fixture-key")
         let global = try ProviderUsageAdapter.request(for: connection(.miniMax, region: .global), key: "fixture-key")
@@ -422,15 +483,54 @@ private actor RecordingProviderTransport: ProviderUsageTransport {
 
 /// Returns the captured team-scope empty answer for type=2 and a populated
 /// personal-scope answer for type=1, recording the visited scopes in order.
+/// Context lookups answer with a personal account (no organizations).
 private actor ScopedQuotaTransport: ProviderUsageTransport {
     private(set) var visitedTypes: [Int] = []
     func send(_ request: URLRequest) async throws -> ProviderHTTPResponse {
         let query = request.url?.query ?? ""
+        guard query.contains("type=") else {
+            return ProviderHTTPResponse(
+                data: Data(#"{"code":200,"data":{},"success":true}"#.utf8),
+                statusCode: 200, headers: [:], url: request.url!)
+        }
         let scope = query.contains("type=2") ? 2 : 1
         visitedTypes.append(scope)
         let body = scope == 2
             ? "{\"code\":200,\"data\":{\"level\":\"pro\",\"limits\":[]}}"
             : "{\"code\":200,\"data\":{\"limits\":[{\"unit\":3,\"number\":5,\"usage\":100,\"remaining\":40,\"nextResetTime\":1800007200000}]}}"
+        return ProviderHTTPResponse(data: Data(body.utf8), statusCode: 200, headers: [:], url: request.url!)
+    }
+}
+
+/// Answers the console customer-info lookup with a configurable body and every
+/// quota request with one populated coding-plan window, recording visited
+/// paths and the quota requests' protocol-relevant headers.
+private actor ZhipuConsoleTransport: ProviderUsageTransport {
+    let contextStatus: Int
+    let contextBody: String
+    private(set) var visitedPaths: [String] = []
+    private(set) var contextAuthorization: String?
+    private(set) var quotaHeaders: [[String: String]] = []
+
+    init(contextStatus: Int = 200, contextBody: String) {
+        self.contextStatus = contextStatus
+        self.contextBody = contextBody
+    }
+
+    func send(_ request: URLRequest) async throws -> ProviderHTTPResponse {
+        let path = request.url?.path ?? ""
+        visitedPaths.append(path)
+        guard !path.contains("getCustomerInfo") else {
+            contextAuthorization = request.value(forHTTPHeaderField: "Authorization")
+            return ProviderHTTPResponse(data: Data(contextBody.utf8),
+                                        statusCode: contextStatus, headers: [:], url: request.url!)
+        }
+        var headers: [String: String] = [:]
+        for name in ["Authorization", "bigmodel-organization", "bigmodel-project"] {
+            headers[name] = request.value(forHTTPHeaderField: name)
+        }
+        quotaHeaders.append(headers)
+        let body = "{\"code\":200,\"data\":{\"limits\":[{\"unit\":3,\"number\":5,\"usage\":100,\"remaining\":40,\"nextResetTime\":1800007200000}]}}"
         return ProviderHTTPResponse(data: Data(body.utf8), statusCode: 200, headers: [:], url: request.url!)
     }
 }

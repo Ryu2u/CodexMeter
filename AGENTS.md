@@ -104,8 +104,13 @@ has changed.
   contract. Zhipu is experimental and reads the GLM Coding plan's five-hour and
   weekly credit windows from the undocumented bigmodel.cn console endpoint
   (`/api/monitor/usage/quota/limit?type=2`) with the raw session JWT pasted by
-  the user; unit 3 counts hours and unit 6 counts weeks, unknown units keep no
-  window timing, and session expiry surfaces as authentication-required.
+  the user. Team-plan quota is only visible through the console's organization
+  context, so each refresh first resolves the default organization and project
+  from `/api/biz/customer/getCustomerInfo` and attaches the
+  `bigmodel-organization`/`bigmodel-project` headers to the quota request;
+  personal accounts answer without organizations and stay headerless. Unit 3
+  counts hours and unit 6 counts weeks, unknown units keep no window timing,
+  and session expiry surfaces as authentication-required.
   Preserve boost-adjusted base percentages while normalizing progress
   and pace to current plan capacity. Do not infer token usage from quota.
 - ProviderCredentialStore owns only app-created API-key items in its Keychain
