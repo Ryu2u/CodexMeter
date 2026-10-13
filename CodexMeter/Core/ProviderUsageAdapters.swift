@@ -100,15 +100,25 @@ nonisolated enum ProviderUsageAdapter {
         case .miniMax:
             let host = region == .china ? "api.minimax.cn" : "api.minimax.io"
             return URL(string: "https://\(host)/v1/token_plan/remains")!
+        case .zhipu:
+            // Console quota endpoint captured from the coding-plan web app;
+            // undocumented, so decode defensively and treat drift as failure.
+            return URL(string: "https://bigmodel.cn/api/monitor/usage/quota/limit?type=2")!
         }
     }
 
     static func request(for connection: ProviderConnection, key: String) throws -> URLRequest {
+        if connection.kind == .zhipu {
+            // The console API authenticates with the raw session JWT; a Bearer
+            // prefix would change the header value and fail.
+            guard validZhipuCredential(key) else { throw ProviderUsageFailure(code: .credentialMissing) }
+        }
         guard validCredential(key) else { throw ProviderUsageFailure(code: .credentialMissing) }
         var request = URLRequest(url: endpoint(kind: connection.kind, region: connection.region),
                                  cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
         request.httpMethod = "GET"
-        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        request.setValue(connection.kind == .zhipu ? key : "Bearer \(key)",
+                         forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         return request
@@ -161,6 +171,7 @@ nonisolated enum ProviderUsageAdapter {
         switch kind {
         case .deepSeek: buckets = try decodeDeepSeek(body)
         case .miniMax: buckets = try decodeMiniMax(body)
+        case .zhipu: buckets = try decodeZhipu(body)
         }
         guard !buckets.isEmpty, buckets.count <= maximumBuckets,
               Set(buckets.map(\.id)).count == buckets.count else {
@@ -278,6 +289,79 @@ nonisolated enum ProviderUsageAdapter {
         guard remaining.isFinite else { return .unavailable }
         // Preserve boosted values above 100 in the metric; visual progress remains bounded.
         return .percentage(remaining: remaining)
+    }
+
+    /// The coding-plan console reports one entry per reset window with the
+    /// window's total credits, remaining credits, used percentage, and the
+    /// next reset as epoch milliseconds. `percentage` is used quota, so the
+    /// exact remaining counts drive the metric and the percentage only
+    /// cross-checks.
+    private static func decodeZhipu(_ body: [String: Any]) throws -> [ProviderUsageBucket] {
+        if let code = integer(body["code"]), code != 200 {
+            throw ProviderUsageFailure(code: code == 401 || code == 403 ? .authentication : .invalidResponse)
+        }
+        guard let data = body["data"] as? [String: Any],
+              let limits = data["limits"] as? [[String: Any]],
+              !limits.isEmpty, limits.count <= maximumBuckets else {
+            throw ProviderUsageFailure(code: .unsupportedResponse)
+        }
+        var seenIDs: Set<String> = []
+        return try limits.map { limit in
+            guard let usage = number(limit["usage"]), usage > 0,
+                  usage <= Self.maximumWindowCredits,
+                  let remaining = number(limit["remaining"]), remaining >= 0, remaining <= usage else {
+                throw ProviderUsageFailure(code: .unsupportedResponse)
+            }
+            let durationMins = zhipuWindowMinutes(unit: integer(limit["unit"]), number: integer(limit["number"]))
+            let baseID: String
+            if let durationMins {
+                baseID = "zhipu:\(durationMins)"
+            } else {
+                let unit = integer(limit["unit"]) ?? -1
+                let number = integer(limit["number"]) ?? -1
+                baseID = "zhipu:u\(unit)n\(number)"
+            }
+            // Duplicate window types may legitimately appear; suffix keeps IDs
+            // unique while staying stable for a fixed server ordering.
+            var id = baseID
+            var counter = 2
+            while !seenIDs.insert(id).inserted {
+                id = "\(baseID)#\(counter)"
+                counter += 1
+            }
+            let resetsAt = millisecondsTimestamp(limit["nextResetTime"])
+            // Counts stay exact; the reported integer percentage is only a summary.
+            return ProviderUsageBucket(
+                id: id,
+                title: durationMins.map { "\($0)m" } ?? "window",
+                metric: .count(remaining: Int64(remaining.rounded()), unit: "credits"),
+                totalCount: Int64(usage.rounded()),
+                windowDuration: durationMins.map { Double($0) * 60 },
+                resetsAt: resetsAt
+            )
+        }
+    }
+
+    /// Unit 3 counts hours and unit 6 counts weeks in the captured responses.
+    /// Unknown units stay unknown instead of guessing a window length.
+    private static func zhipuWindowMinutes(unit: Int64?, number: Int64?) -> Int? {
+        guard let unit, let number, number > 0, number <= 366 else { return nil }
+        switch unit {
+        case 3: return Int(number) * 60
+        case 6: return Int(number) * 10_080
+        default: return nil
+        }
+    }
+
+    static let maximumWindowCredits: Double = 1_000_000_000
+
+    /// Console credentials are session JWTs: three base64url segments whose
+    /// header starts with the canonical `{"alg"` encoding.
+    static func validZhipuCredential(_ key: String) -> Bool {
+        guard validCredential(key), key.hasPrefix("eyJ"), key.split(separator: ".").count == 3 else {
+            return false
+        }
+        return true
     }
 
     static func validCredential(_ key: String) -> Bool {

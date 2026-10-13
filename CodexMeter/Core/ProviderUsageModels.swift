@@ -3,9 +3,10 @@ import Foundation
 nonisolated enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
     case deepSeek
     case miniMax
+    case zhipu
 
     var id: String { rawValue }
-    var isExperimental: Bool { self == .miniMax }
+    var isExperimental: Bool { self == .miniMax || self == .zhipu }
 }
 
 nonisolated enum ProviderRegion: String, Codable, CaseIterable, Identifiable, Sendable {

@@ -188,6 +188,87 @@ final class ProviderUsageTests: XCTestCase {
         XCTAssertEqual(milliseconds.windowDuration, 18_000)
     }
 
+    func testZhipuDecodesCodingPlanWindowsWithExactCountsAndTiming() throws {
+        // Captured console response shape; protocol fixture, not a live verified account.
+        let snapshot = try decode("""
+        {"code":200,"msg":"ok","data":{"level":"pro","limits":[
+          {"type":"CREDIT_LIMIT","unit":3,"number":5,"usage":15000,"currentValue":604,
+           "remaining":14396,"percentage":4,"nextResetTime":1800007200000},
+          {"type":"CREDIT_LIMIT","unit":6,"number":1,"usage":66000,"currentValue":10716,
+           "remaining":55284,"percentage":16,"nextResetTime":1800604800000}
+        ]}}
+        """, kind: .zhipu)
+        XCTAssertEqual(snapshot.buckets.map(\.id), ["zhipu:300", "zhipu:10080"])
+        XCTAssertEqual(snapshot.buckets[0].metric, .count(remaining: 14396, unit: "credits"))
+        XCTAssertEqual(snapshot.buckets[0].totalCount, 15000)
+        XCTAssertEqual(snapshot.buckets[1].metric, .count(remaining: 55284, unit: "credits"))
+        XCTAssertEqual(snapshot.buckets[1].totalCount, 66000)
+        XCTAssertEqual(snapshot.buckets[0].windowDuration, 18_000)
+        XCTAssertEqual(snapshot.buckets[1].windowDuration, 604_800)
+        XCTAssertEqual(snapshot.buckets[0].resetsAt, date.addingTimeInterval(7_200))
+        XCTAssertEqual(snapshot.buckets[1].resetsAt, date.addingTimeInterval(604_800))
+        XCTAssertEqual(snapshot.buckets[0].remainingPercent ?? 0, 95.97, accuracy: 0.01)
+        XCTAssertTrue(ProviderKind.zhipu.isExperimental)
+    }
+
+    func testZhipuBusinessCodesAndMalformedLimitsFailClosed() {
+        XCTAssertThrowsError(try decode("""
+        {"code":401,"msg":"private","data":{"limits":[]}}
+        """, kind: .zhipu)) { error in
+            XCTAssertEqual((error as? ProviderUsageFailure)?.code, .authentication)
+        }
+        XCTAssertThrowsError(try decode("""
+        {"code":500,"msg":"private","data":{"limits":[]}}
+        """, kind: .zhipu)) { error in
+            XCTAssertEqual((error as? ProviderUsageFailure)?.code, .invalidResponse)
+        }
+        for json in [
+            "{\"data\":{\"limits\":[]}}",
+            "{\"data\":{\"limits\":[{\"unit\":3,\"number\":5,\"usage\":0,\"remaining\":0}]}}",
+            "{\"data\":{\"limits\":[{\"unit\":3,\"number\":5,\"usage\":100,\"remaining\":101}]}}",
+            "{\"data\":{\"limits\":[{\"unit\":3,\"number\":5,\"remaining\":10}]}}",
+            "{\"data\":{}}",
+            "{\"limits\":[{\"unit\":3,\"number\":5,\"usage\":100,\"remaining\":10}]}"
+        ] {
+            XCTAssertThrowsError(try decode(json, kind: .zhipu))
+        }
+    }
+
+    func testZhipuUnknownUnitsKeepIdentityAndResetWithoutInventingWindows() throws {
+        let snapshot = try decode("""
+        {"code":200,"data":{"limits":[
+          {"unit":9,"number":3,"usage":500,"remaining":250,"nextResetTime":1800007200000}
+        ]}}
+        """, kind: .zhipu)
+        XCTAssertEqual(snapshot.buckets.map(\.id), ["zhipu:u9n3"])
+        XCTAssertNil(snapshot.buckets[0].windowDuration)
+        XCTAssertEqual(snapshot.buckets[0].resetsAt, date.addingTimeInterval(7_200))
+        XCTAssertEqual(snapshot.buckets[0].remainingPercent ?? 0, 50, accuracy: 0.01)
+    }
+
+    func testZhipuDuplicateWindowTypesKeepStableSuffixedIdentities() throws {
+        let snapshot = try decode("""
+        {"code":200,"data":{"limits":[
+          {"unit":3,"number":5,"usage":100,"remaining":50},
+          {"unit":3,"number":5,"usage":200,"remaining":10}
+        ]}}
+        """, kind: .zhipu)
+        XCTAssertEqual(snapshot.buckets.map(\.id), ["zhipu:300", "zhipu:300#2"])
+        XCTAssertEqual(snapshot.buckets[1].metric, .count(remaining: 10, unit: "credits"))
+    }
+
+    func testZhipuCredentialsAreSessionJWTsWithoutBearerPrefix() throws {
+        XCTAssertTrue(ProviderUsageAdapter.validZhipuCredential(
+            "eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiIxIn0.c2ln"))
+        XCTAssertFalse(ProviderUsageAdapter.validZhipuCredential("plain-api-key.id.secret"))
+        XCTAssertFalse(ProviderUsageAdapter.validZhipuCredential("Bearer eyJhbGciOiJIUzUxMiJ9.a.b"))
+        XCTAssertFalse(ProviderUsageAdapter.validZhipuCredential("eyJhbGciOiJIUzUxMiJ9.only-two"))
+        let request = try ProviderUsageAdapter.request(for: connection(.zhipu), key: "eyJhbGciOiJIUzUxMiJ9.a.b")
+        XCTAssertEqual(request.url?.absoluteString, "https://bigmodel.cn/api/monitor/usage/quota/limit?type=2")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "eyJhbGciOiJIUzUxMiJ9.a.b")
+        XCTAssertThrowsError(try ProviderUsageAdapter.request(for: connection(.zhipu), key: "not-a-jwt"))
+    }
+
     func testOfficialRegionsRequestsAndOriginPolicy() throws {
         let cn = try ProviderUsageAdapter.request(for: connection(.miniMax, region: .china), key: "fixture-key")
         let global = try ProviderUsageAdapter.request(for: connection(.miniMax, region: .global), key: "fixture-key")

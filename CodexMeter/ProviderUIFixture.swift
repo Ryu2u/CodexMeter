@@ -16,7 +16,10 @@ enum ProviderUIFixture {
             let credentials = FixtureCredentials()
             let connections = FixtureConnections()
             for connection in connections.values {
-                credentials.values[connection.credentialReference] = "preview-only-not-an-api-key"
+                credentials.values[connection.credentialReference] =
+                    connection.kind == .zhipu
+                    ? "eyJhbGciOiJIUzUxMiJ9.zm9sZS1wcmV2aWV3.sig"
+                    : "preview-only-not-an-api-key"
             }
             return ProviderUsageCoordinator(
                 credentialStore: credentials, connectionStore: connections,
@@ -47,6 +50,9 @@ private final class FixtureConnections: ProviderConnectionStoreProtocol {
                            name: L10n.string("providers.preview_balance"), enabled: true,
                            credentialReference: UUID().uuidString, identityEpoch: UUID(), selectedBucketID: nil),
         ProviderConnection(id: UUID(), kind: .miniMax, region: .global,
+                           name: L10n.string("providers.preview_quota"), enabled: true,
+                           credentialReference: UUID().uuidString, identityEpoch: UUID(), selectedBucketID: nil),
+        ProviderConnection(id: UUID(), kind: .zhipu, region: .china,
                            name: L10n.string("providers.preview_quota"), enabled: true,
                            credentialReference: UUID().uuidString, identityEpoch: UUID(), selectedBucketID: nil)
     ]
@@ -86,6 +92,19 @@ private struct FixtureTransport: ProviderUsageTransport {
                 "weekly_start_time": Int64((now - 302400) * 1000),
                 "weekly_end_time": Int64((now + 302400) * 1000)
             ]]]
+        case "bigmodel.cn":
+            let now = Date().timeIntervalSince1970
+            body = ["code": 200, "msg": "操作成功", "data": [
+                "level": "pro",
+                "limits": [
+                    ["type": "CREDIT_LIMIT", "unit": 3, "number": 5,
+                     "usage": 15000, "currentValue": 604, "remaining": 14396,
+                     "percentage": 4, "nextResetTime": Int64((now + 7200) * 1000)],
+                    ["type": "CREDIT_LIMIT", "unit": 6, "number": 1,
+                     "usage": 66000, "currentValue": 10716, "remaining": 55284,
+                     "percentage": 16, "nextResetTime": Int64((now + 302400) * 1000)]
+                ]
+            ]]
         default:
             throw ProviderUsageFailure(code: .invalidConfiguration)
         }

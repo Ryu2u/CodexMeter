@@ -89,7 +89,12 @@ has changed.
   ProviderUsageModels and ProviderUsageAdapters keep platform decoding separate
   from the Codex OAuth service. DeepSeek exposes currency balances;
   MiniMax plan quota is experimental and follows the pinned first-party CLI
-  contract. Preserve boost-adjusted base percentages while normalizing progress
+  contract. Zhipu is experimental and reads the GLM Coding plan's five-hour and
+  weekly credit windows from the undocumented bigmodel.cn console endpoint
+  (`/api/monitor/usage/quota/limit?type=2`) with the raw session JWT pasted by
+  the user; unit 3 counts hours and unit 6 counts weeks, unknown units keep no
+  window timing, and session expiry surfaces as authentication-required.
+  Preserve boost-adjusted base percentages while normalizing progress
   and pace to current plan capacity. Do not infer token usage from quota.
 - ProviderCredentialStore owns only app-created API-key items in its Keychain
   namespace. ProviderConnectionStore persists metadata and a bounded crash-safe
