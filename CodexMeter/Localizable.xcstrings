@@ -7093,6 +7093,29 @@
         }
       }
     },
+    "providers.zhipu_key_help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Paste the bigmodel.cn console session JWT (starts with eyJ), copied from the Authorization header of any bigmodel.cn/api request in your browser. This is not the open-platform API key. When the session expires, quota shows as needing re-authentication; copy a fresh JWT."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "粘贴 bigmodel.cn 控制台的会话 JWT（以 eyJ 开头）：在浏览器开发者工具中，任意 bigmodel.cn/api 请求的 Authorization 请求头整段内容。这不是开放平台的 API Key。会话失效后额度会显示需要重新认证，届时重新复制一次新 JWT。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "貼上 bigmodel.cn 控制台的會話 JWT（以 eyJ 開頭）：在瀏覽器開發者工具中，任意 bigmodel.cn/api 請求的 Authorization 請求頭整段內容。這不是開放平台的 API Key。會話失效後額度會顯示需要重新認證，屆時重新複製一次新 JWT。"
+          }
+        }
+      }
+    },
     "quota.remaining": {
       "extractionState": "stale",
       "localizations": {

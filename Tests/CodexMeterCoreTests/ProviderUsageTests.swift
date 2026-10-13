@@ -269,6 +269,28 @@ final class ProviderUsageTests: XCTestCase {
         XCTAssertThrowsError(try ProviderUsageAdapter.request(for: connection(.zhipu), key: "not-a-jwt"))
     }
 
+    func testZhipuFetchFallsBackFromTeamToPersonalScope() async throws {
+        let transport = ScopedQuotaTransport()
+        let snapshot = try await ProviderUsageAdapter.fetch(
+            connection: connection(.zhipu), key: "eyJhbGciOiJIUzUxMiJ9.a.b",
+            transport: transport, now: { date })
+        XCTAssertEqual(snapshot.buckets.map(\.id), ["zhipu:300"])
+        let requests = await transport.visitedTypes
+        XCTAssertEqual(requests, [2, 1])
+    }
+
+    func testZhipuConsoleAuthCodeMapsToAuthentication() {
+        XCTAssertThrowsError(try decode("""
+        {"code":1001,"msg":"private","success":false}
+        """, kind: .zhipu)) { error in
+            XCTAssertEqual((error as? ProviderUsageFailure)?.code, .authentication)
+        }
+        let personalRequest = try? ProviderUsageAdapter.request(
+            for: connection(.zhipu), key: "eyJhbGciOiJIUzUxMiJ9.a.b", quotaType: 1)
+        XCTAssertEqual(personalRequest?.url?.absoluteString,
+                       "https://bigmodel.cn/api/monitor/usage/quota/limit?type=1")
+    }
+
     func testOfficialRegionsRequestsAndOriginPolicy() throws {
         let cn = try ProviderUsageAdapter.request(for: connection(.miniMax, region: .china), key: "fixture-key")
         let global = try ProviderUsageAdapter.request(for: connection(.miniMax, region: .global), key: "fixture-key")
@@ -395,5 +417,20 @@ private actor RecordingProviderTransport: ProviderUsageTransport {
     func send(_ request: URLRequest) async throws -> ProviderHTTPResponse {
         requests.append(request)
         return response
+    }
+}
+
+/// Returns the captured team-scope empty answer for type=2 and a populated
+/// personal-scope answer for type=1, recording the visited scopes in order.
+private actor ScopedQuotaTransport: ProviderUsageTransport {
+    private(set) var visitedTypes: [Int] = []
+    func send(_ request: URLRequest) async throws -> ProviderHTTPResponse {
+        let query = request.url?.query ?? ""
+        let scope = query.contains("type=2") ? 2 : 1
+        visitedTypes.append(scope)
+        let body = scope == 2
+            ? "{\"code\":200,\"data\":{\"level\":\"pro\",\"limits\":[]}}"
+            : "{\"code\":200,\"data\":{\"limits\":[{\"unit\":3,\"number\":5,\"usage\":100,\"remaining\":40,\"nextResetTime\":1800007200000}]}}"
+        return ProviderHTTPResponse(data: Data(body.utf8), statusCode: 200, headers: [:], url: request.url!)
     }
 }

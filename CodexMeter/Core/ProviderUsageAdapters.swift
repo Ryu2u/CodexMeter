@@ -101,20 +101,32 @@ nonisolated enum ProviderUsageAdapter {
             let host = region == .china ? "api.minimax.cn" : "api.minimax.io"
             return URL(string: "https://\(host)/v1/token_plan/remains")!
         case .zhipu:
-            // Console quota endpoint captured from the coding-plan web app;
-            // undocumented, so decode defensively and treat drift as failure.
-            return URL(string: "https://bigmodel.cn/api/monitor/usage/quota/limit?type=2")!
+            return zhipuEndpoint(quotaType: 2)
         }
     }
 
-    static func request(for connection: ProviderConnection, key: String) throws -> URLRequest {
+    /// The console scopes quota by account type: 2 matched the captured team
+    /// plan and 1 covers personal plans. The request is read-only, so trying
+    /// the other scope after an empty answer is safe.
+    private static func zhipuEndpoint(quotaType: Int) -> URL {
+        URL(string: "https://bigmodel.cn/api/monitor/usage/quota/limit?type=\(quotaType)")!
+    }
+
+    static func request(
+        for connection: ProviderConnection,
+        key: String,
+        quotaType: Int = 2
+    ) throws -> URLRequest {
         if connection.kind == .zhipu {
             // The console API authenticates with the raw session JWT; a Bearer
             // prefix would change the header value and fail.
             guard validZhipuCredential(key) else { throw ProviderUsageFailure(code: .credentialMissing) }
         }
         guard validCredential(key) else { throw ProviderUsageFailure(code: .credentialMissing) }
-        var request = URLRequest(url: endpoint(kind: connection.kind, region: connection.region),
+        let url = connection.kind == .zhipu
+            ? zhipuEndpoint(quotaType: quotaType)
+            : endpoint(kind: connection.kind, region: connection.region)
+        var request = URLRequest(url: url,
                                  cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
         request.httpMethod = "GET"
         request.setValue(connection.kind == .zhipu ? key : "Bearer \(key)",
@@ -131,26 +143,30 @@ nonisolated enum ProviderUsageAdapter {
         now: @Sendable () -> Date = { Date() }
     ) async throws -> ProviderUsageSnapshot {
         do {
-            let request = try request(for: connection, key: key)
-            let response = try await transport.send(request)
-            try Task.checkCancellation()
-            guard let expectedURL = request.url, sameOrigin(expectedURL, response.url) else {
-                throw ProviderUsageFailure(code: .invalidResponse)
+            let requests: [URLRequest]
+            if connection.kind == .zhipu {
+                requests = try [2, 1].map { try request(for: connection, key: key, quotaType: $0) }
+            } else {
+                requests = [try request(for: connection, key: key)]
             }
-            guard response.data.count <= maximumResponseBytes else {
-                throw ProviderUsageFailure(code: .responseTooLarge)
+            var lastFailure = ProviderUsageFailure(code: .invalidResponse)
+            for (index, request) in requests.enumerated() {
+                do {
+                    return try await sendAndDecode(
+                        request: request, connection: connection,
+                        transport: transport, now: now
+                    )
+                } catch let failure as ProviderUsageFailure {
+                    lastFailure = failure
+                    // Only a well-formed answer without windows is worth
+                    // retrying with the other account scope.
+                    let canRetryScope = connection.kind == .zhipu
+                        && failure.code == .unsupportedResponse
+                        && index < requests.count - 1
+                    guard canRetryScope else { throw failure }
+                }
             }
-            let date = now()
-            switch response.statusCode {
-            case 200..<300: break
-            case 401, 403: throw ProviderUsageFailure(code: .authentication)
-            case 429:
-                throw ProviderUsageFailure(code: .rateLimited,
-                                           retryAt: retryAfter(response.headers["retry-after"], at: date))
-            case 500..<600: throw ProviderUsageFailure(code: .network)
-            default: throw ProviderUsageFailure(code: .invalidResponse)
-            }
-            return try decode(response.data, kind: connection.kind, fetchedAt: date)
+            throw lastFailure
         } catch is CancellationError {
             throw CancellationError()
         } catch let error as ProviderUsageFailure {
@@ -161,6 +177,33 @@ nonisolated enum ProviderUsageAdapter {
         } catch {
             throw ProviderUsageFailure(code: .network)
         }
+    }
+
+    private static func sendAndDecode(
+        request: URLRequest,
+        connection: ProviderConnection,
+        transport: any ProviderUsageTransport,
+        now: @Sendable () -> Date
+    ) async throws -> ProviderUsageSnapshot {
+        let response = try await transport.send(request)
+        try Task.checkCancellation()
+        guard let expectedURL = request.url, sameOrigin(expectedURL, response.url) else {
+            throw ProviderUsageFailure(code: .invalidResponse)
+        }
+        guard response.data.count <= maximumResponseBytes else {
+            throw ProviderUsageFailure(code: .responseTooLarge)
+        }
+        let date = now()
+        switch response.statusCode {
+        case 200..<300: break
+        case 401, 403: throw ProviderUsageFailure(code: .authentication)
+        case 429:
+            throw ProviderUsageFailure(code: .rateLimited,
+                                       retryAt: retryAfter(response.headers["retry-after"], at: date))
+        case 500..<600: throw ProviderUsageFailure(code: .network)
+        default: throw ProviderUsageFailure(code: .invalidResponse)
+        }
+        return try decode(response.data, kind: connection.kind, fetchedAt: date)
     }
 
     static func decode(_ data: Data, kind: ProviderKind, fetchedAt: Date) throws -> ProviderUsageSnapshot {
@@ -298,7 +341,9 @@ nonisolated enum ProviderUsageAdapter {
     /// cross-checks.
     private static func decodeZhipu(_ body: [String: Any]) throws -> [ProviderUsageBucket] {
         if let code = integer(body["code"]), code != 200 {
-            throw ProviderUsageFailure(code: code == 401 || code == 403 ? .authentication : .invalidResponse)
+            // 1001 is the console's "Authorization missing or rejected" code.
+            throw ProviderUsageFailure(
+                code: code == 401 || code == 403 || code == 1001 ? .authentication : .invalidResponse)
         }
         guard let data = body["data"] as? [String: Any],
               let limits = data["limits"] as? [[String: Any]],

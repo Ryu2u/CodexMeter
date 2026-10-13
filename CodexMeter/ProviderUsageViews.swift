@@ -389,8 +389,9 @@ private struct ProviderConnectionEditor: View {
     init(providers: ProviderUsageCoordinator, connection: ProviderConnection?) {
         self.providers = providers
         self.connection = connection
-        _kind = State(initialValue: connection?.kind ?? .deepSeek)
-        _region = State(initialValue: connection?.region ?? .global)
+        let initialKind = connection?.kind ?? .deepSeek
+        _kind = State(initialValue: initialKind)
+        _region = State(initialValue: connection?.region ?? (initialKind == .zhipu ? .china : .global))
         _name = State(initialValue: connection?.name ?? "")
         _enabled = State(initialValue: connection?.enabled ?? true)
     }
@@ -410,6 +411,11 @@ private struct ProviderConnectionEditor: View {
                     Text(L10n.string("providers.experimental")).font(.caption).foregroundStyle(.orange)
                     Text(L10n.string("providers.minimax_key_help")).font(.caption).foregroundStyle(.secondary)
                 }
+                if kind == .zhipu {
+                    Text(L10n.string("providers.experimental")).font(.caption).foregroundStyle(.orange)
+                    Text(L10n.string("providers.zhipu_key_help")).font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 TextField(L10n.string("providers.name"), text: $name)
                 SecureField(L10n.string(connection == nil ? "providers.api_key" : "providers.replace_key"), text: $key)
                     .textContentType(.password)
@@ -427,7 +433,8 @@ private struct ProviderConnectionEditor: View {
                 Button(L10n.string("providers.save_query")) {
                     do {
                         try providers.saveConnection(
-                            id: connection?.id, kind: kind, region: kind == .deepSeek ? .global : region,
+                            id: connection?.id, kind: kind,
+                            region: kind == .deepSeek ? .global : kind == .zhipu ? .china : region,
                             name: name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                                 ? kind.localizedName : name,
                             key: key, enabled: enabled
