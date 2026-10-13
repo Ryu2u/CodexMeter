@@ -132,6 +132,21 @@ final class CodexOAuthClientTests: XCTestCase {
         catch { XCTAssertEqual(error as? CodexOAuthError, .responseTooLarge) }
     }
 
+    func testQuota401RejectsOnlyAccessTokenWhile403RemainsRetryable() async throws {
+        for (status, expected) in [(401, CodexOAuthError.accessTokenRejected),
+                                   (403, CodexOAuthError.authentication)] {
+            let client = CodexOAuthClient(transport: OAuthStubTransport([
+                reply("/backend-api/wham/usage", status, "<html>request rejected</html>", host: "chatgpt.com")
+            ]))
+            do {
+                _ = try await client.fetchQuota(accessToken: "fixture-access", accountID: nil)
+                XCTFail("Expected a sanitized quota failure")
+            } catch {
+                XCTAssertEqual(error as? CodexOAuthError, expected)
+            }
+        }
+    }
+
     func testMalformedQuotaAndRedirectAreRejected() async throws {
         for json in [#"{"rate_limit":{"primary_window":{"used_percent":false}}}"#,
                      #"{"rate_limit":{"primary_window":{"used_percent":110}}}"#,

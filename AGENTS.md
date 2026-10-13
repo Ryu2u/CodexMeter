@@ -80,9 +80,18 @@ has changed.
   the grant dead (`invalid_grant` or the refresh-token-expired family); bare
   401/403 rejections from proxies or WAFs keep the stored grant retryable so
   toggling the proxy recovers without a new sign-in, and other transport
-  failures keep the last snapshot and mark it stale. It stays
-  disabled under the Debug provider fixture, and `start()` is called
-  unconditionally because no source switching exists.
+  failures keep the last snapshot and mark it stale. Reuse an unexpired access
+  token after network failures or 403 responses; only quota 401 invalidates the
+  access cache. `Core/CodexOAuthSessionState.swift` retains a rotated refresh
+  credential in memory until persistence succeeds, and the service retries that
+  write before making any further token request. A persistence failure must
+  never trigger Keychain delete-and-add or a new refresh with the old grant.
+  `Core/CodexOAuthCredentialStore.swift` owns the app-only Keychain item;
+  startup and automatic operations forbid authorization dialogs. Storage errors
+  pause automatic access until manual refresh or sign-in allows authorization.
+  Pending credentials are volatile: quitting before persistence completes can
+  still require a new sign-in. The service stays disabled under the Debug
+  provider fixture, and `start()` runs because no source switching exists.
 - `Core/CodexOAuthClient.swift` contains the pure device-code OAuth protocol and
   `wham/usage` decoding: a no-redirect ephemeral transport, 20-second timeout,
   and a 512-KiB response cap. These endpoints are experimental and undocumented;

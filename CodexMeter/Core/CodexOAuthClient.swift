@@ -14,7 +14,7 @@ struct CodexOAuthAuthorization: Sendable {
     let codeVerifier: String
 }
 
-struct CodexOAuthTokens: Sendable {
+nonisolated struct CodexOAuthTokens: Sendable {
     let accessToken: String
     let refreshToken: String?
     let idToken: String?
@@ -27,8 +27,8 @@ struct CodexOAuthQuota: Sendable {
 }
 
 /// These errors contain no remote message, URL, token, or response body.
-enum CodexOAuthError: Error, Equatable, Sendable {
-    case network, timeout, authentication, deviceCodeExpired
+nonisolated enum CodexOAuthError: Error, Equatable, Sendable {
+    case network, timeout, authentication, accessTokenRejected, deviceCodeExpired
     case refreshTokenInvalid, rateLimited, invalidResponse, responseTooLarge
 }
 
@@ -162,6 +162,7 @@ final class CodexOAuthClient: Sendable {
         var headers = ["Authorization": "Bearer \(accessToken)"]
         if let accountID { headers["ChatGPT-Account-Id"] = accountID }
         let response = try await send(url: Self.usageURL, method: "GET", headers: headers)
+        if response.status == 401 { throw CodexOAuthError.accessTokenRejected }
         try validate(response)
         return try Self.decodeQuota(response.data)
     }
