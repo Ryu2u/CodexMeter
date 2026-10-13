@@ -112,15 +112,20 @@ nonisolated enum ProviderUsageAdapter {
         URL(string: "https://bigmodel.cn/api/monitor/usage/quota/limit?type=\(quotaType)")!
     }
 
-    /// Console organization context. The web console resolves the customer's
-    /// default organization and project once, then attaches both IDs to every
-    /// authenticated API call; team-plan quota is only visible through that
-    /// organization context. Personal accounts answer without organizations
-    /// and keep the headerless quota request.
-    struct ZhipuConsoleContext: Sendable {
-        let organizationID: String?
+    /// One console organization the quota request can be scoped with. The web
+    /// console resolves the customer's organizations once, then attaches the
+    /// organization and project IDs to every authenticated API call; team-plan
+    /// quota is only visible through that organization context. The plan may
+    /// live under a non-default organization (for example a team seat), so all
+    /// organizations are tried, default first.
+    struct ZhipuOrganizationScope: Sendable {
+        let organizationID: String
         let projectID: String?
     }
+
+    /// Team seats commonly sit outside the default (personal) organization, so
+    /// bound the per-refresh organization probes.
+    static let maximumZhipuOrganizations = 8
 
     private static func zhipuContextEndpoint() -> URL {
         URL(string: "https://bigmodel.cn/api/biz/customer/getCustomerInfo")!
@@ -130,7 +135,7 @@ nonisolated enum ProviderUsageAdapter {
         for connection: ProviderConnection,
         key: String,
         quotaType: Int = 2,
-        zhipuContext: ZhipuConsoleContext? = nil
+        zhipuScope: ZhipuOrganizationScope? = nil
     ) throws -> URLRequest {
         if connection.kind == .zhipu {
             // The console API authenticates with the raw session JWT; a Bearer
@@ -146,11 +151,11 @@ nonisolated enum ProviderUsageAdapter {
         request.httpMethod = "GET"
         request.setValue(connection.kind == .zhipu ? key : "Bearer \(key)",
                          forHTTPHeaderField: "Authorization")
-        if let organizationID = zhipuContext?.organizationID {
-            request.setValue(organizationID, forHTTPHeaderField: "bigmodel-organization")
-        }
-        if let projectID = zhipuContext?.projectID {
-            request.setValue(projectID, forHTTPHeaderField: "bigmodel-project")
+        if let scope = zhipuScope {
+            request.setValue(scope.organizationID, forHTTPHeaderField: "bigmodel-organization")
+            if let projectID = scope.projectID {
+                request.setValue(projectID, forHTTPHeaderField: "bigmodel-project")
+            }
         }
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -165,18 +170,36 @@ nonisolated enum ProviderUsageAdapter {
     ) async throws -> ProviderUsageSnapshot {
         do {
             let requests: [URLRequest]
+            var zhipuLastFailure: ProviderUsageFailure?
             if connection.kind == .zhipu {
                 // Team-plan quota is invisible without the organization
-                // context, so resolve it from the console before asking for
-                // quota; its auth failures already end this fetch.
-                let context = try await resolveZhipuContext(key: key, transport: transport, now: now)
-                requests = try [2, 1].map {
-                    try request(for: connection, key: key, quotaType: $0, zhipuContext: context)
+                // context, and the plan may live under any of the account's
+                // organizations. Resolve them, probe each with the team scope,
+                // and keep the headerless personal scopes as the last resort.
+                let scopes = try await resolveZhipuScopes(key: key, transport: transport, now: now)
+                for scope in scopes {
+                    do {
+                        return try await sendAndDecode(
+                            request: try request(for: connection, key: key, quotaType: 2, zhipuScope: scope),
+                            connection: connection, transport: transport, now: now)
+                    } catch let failure as ProviderUsageFailure {
+                        // An organization without a coding plan answers with a
+                        // business error or empty windows; both are worth the
+                        // next organization rather than failing the fetch.
+                        switch failure.code {
+                        case .unsupportedResponse, .invalidResponse:
+                            zhipuLastFailure = failure
+                            continue
+                        default:
+                            throw failure
+                        }
+                    }
                 }
+                requests = try [2, 1].map { try request(for: connection, key: key, quotaType: $0) }
             } else {
                 requests = [try request(for: connection, key: key)]
             }
-            var lastFailure = ProviderUsageFailure(code: .invalidResponse)
+            var lastFailure = zhipuLastFailure ?? ProviderUsageFailure(code: .invalidResponse)
             for (index, request) in requests.enumerated() {
                 do {
                     return try await sendAndDecode(
@@ -243,15 +266,15 @@ nonisolated enum ProviderUsageAdapter {
         return try decode(data, kind: connection.kind, fetchedAt: date)
     }
 
-    /// Reads the console customer info to find the default organization and
-    /// project the web console would scope quota requests with. Server-chosen
-    /// IDs are header-validated before use; missing organizations keep the
-    /// personal-scope headerless request.
-    private static func resolveZhipuContext(
+    /// Reads the console customer info to enumerate the organizations the web
+    /// console could scope quota requests with, default organization first.
+    /// Server-chosen IDs are header-validated before use; accounts without
+    /// organizations keep the headerless personal-scope requests.
+    private static func resolveZhipuScopes(
         key: String,
         transport: any ProviderUsageTransport,
         now: @Sendable () -> Date
-    ) async throws -> ZhipuConsoleContext {
+    ) async throws -> [ZhipuOrganizationScope] {
         var request = URLRequest(url: zhipuContextEndpoint(),
                                  cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
         request.httpMethod = "GET"
@@ -270,18 +293,23 @@ nonisolated enum ProviderUsageAdapter {
         guard let payload = body["data"] as? [String: Any] else {
             throw ProviderUsageFailure(code: .invalidResponse)
         }
-        // Personal accounts answer without organizations; keep their quota
-        // request headerless instead of failing the fetch.
+        // Personal accounts answer without organizations; their quota request
+        // stays headerless instead of failing the fetch.
         let organizations = payload["organizations"] as? [[String: Any]] ?? []
-        guard let organization = organizations.first(where: { $0["isDefault"] as? Bool == true })
-            ?? organizations.first else {
-            return ZhipuConsoleContext(organizationID: nil, projectID: nil)
+        let defaults = organizations.filter { $0["isDefault"] as? Bool == true }
+        let others = organizations.filter { $0["isDefault"] as? Bool != true }
+        var scopes: [ZhipuOrganizationScope] = []
+        for organization in (defaults + others).prefix(maximumZhipuOrganizations) {
+            guard let organizationID = safeHeaderValue(organization["organizationId"] as? String) else {
+                continue
+            }
+            let projects = organization["projects"] as? [[String: Any]] ?? []
+            let project = projects.first(where: { $0["isDefault"] as? Bool == true }) ?? projects.first
+            scopes.append(ZhipuOrganizationScope(
+                organizationID: organizationID,
+                projectID: safeHeaderValue(project?["projectId"] as? String)))
         }
-        let projects = organization["projects"] as? [[String: Any]] ?? []
-        let project = projects.first(where: { $0["isDefault"] as? Bool == true }) ?? projects.first
-        return ZhipuConsoleContext(
-            organizationID: safeHeaderValue(organization["organizationId"] as? String),
-            projectID: safeHeaderValue(project?["projectId"] as? String))
+        return scopes
     }
 
     /// Header values come from server-controlled JSON; only accept printable

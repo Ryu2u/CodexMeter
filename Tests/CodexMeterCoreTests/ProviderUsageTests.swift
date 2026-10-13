@@ -352,6 +352,54 @@ final class ProviderUsageTests: XCTestCase {
         XCTAssertNil(quotaHeaders[0]["bigmodel-project"])
     }
 
+    func testZhipuFetchTriesNonDefaultOrganizationsWhenDefaultHasNoPlan() async throws {
+        // Live capture: the account's default (owner) organization answers
+        // business code 500 "当前用户不存在coding plan" while the reader
+        // organization holds the team coding plan. Protocol fixture.
+        let transport = ZhipuConsoleTransport(contextBody: """
+        {"code":200,"msg":"ok","data":{"organizations":[
+          {"organizationId":"org-default-fixture","isDefault":true,
+           "projects":[{"projectId":"proj-default-fixture","isDefault":true}]},
+          {"organizationId":"org-team-fixture","isDefault":false,
+           "projects":[{"projectId":"proj-team-fixture","isDefault":true}]}
+        ]},"success":true}
+        """)
+        await transport.setQuotaReplies([
+            "org-default-fixture": "{\"code\":500,\"msg\":\"no plan\",\"data\":{\"limits\":[]}}",
+            "org-team-fixture": "{\"code\":200,\"data\":{\"limits\":[{\"unit\":3,\"number\":5,\"usage\":15000,\"remaining\":9990,\"nextResetTime\":1800007200000}]}}"
+        ])
+        let snapshot = try await ProviderUsageAdapter.fetch(
+            connection: connection(.zhipu), key: "eyJhbGciOiJIUzUxMiJ9.a.b",
+            transport: transport, now: { date })
+        XCTAssertEqual(snapshot.buckets.map(\.id), ["zhipu:300"])
+        XCTAssertEqual(snapshot.buckets[0].totalCount, 15000)
+        let quotaOrgs = await transport.quotaOrganizationHeaders
+        XCTAssertEqual(quotaOrgs, ["org-default-fixture", "org-team-fixture"])
+    }
+
+    func testZhipuAllOrganizationsWithoutPlanFallBackToPersonalScope() async throws {
+        let transport = ZhipuConsoleTransport(contextBody: """
+        {"code":200,"data":{"organizations":[
+          {"organizationId":"org-a-fixture","isDefault":true,"projects":[]}
+        ]},"success":true}
+        """)
+        await transport.setQuotaReplies([
+            "org-a-fixture": "{\"code\":500,\"msg\":\"no plan\",\"data\":{\"limits\":[]}}"
+        ])
+        let snapshot = try await ProviderUsageAdapter.fetch(
+            connection: connection(.zhipu), key: "eyJhbGciOiJIUzUxMiJ9.a.b",
+            transport: transport, now: { date })
+        XCTAssertEqual(snapshot.buckets.map(\.id), ["zhipu:300"])
+        let paths = await transport.visitedPaths
+        XCTAssertEqual(paths, [
+            "/api/biz/customer/getCustomerInfo",
+            "/api/monitor/usage/quota/limit",  // org-scoped type=2 attempt
+            "/api/monitor/usage/quota/limit"   // headerless personal type=2
+        ])
+        let headerless = await transport.headerlessQuotaCount
+        XCTAssertEqual(headerless, 1)
+    }
+
     func testOfficialRegionsRequestsAndOriginPolicy() throws {
         let cn = try ProviderUsageAdapter.request(for: connection(.miniMax, region: .china), key: "fixture-key")
         let global = try ProviderUsageAdapter.request(for: connection(.miniMax, region: .global), key: "fixture-key")
@@ -502,19 +550,27 @@ private actor ScopedQuotaTransport: ProviderUsageTransport {
     }
 }
 
-/// Answers the console customer-info lookup with a configurable body and every
-/// quota request with one populated coding-plan window, recording visited
-/// paths and the quota requests' protocol-relevant headers.
+/// Answers the console customer-info lookup with a configurable body and
+/// quota requests per organization (keyed by the bigmodel-organization header;
+/// headerless requests and unknown organizations get the default window body),
+/// recording visited paths and the quota requests' protocol-relevant headers.
 private actor ZhipuConsoleTransport: ProviderUsageTransport {
     let contextStatus: Int
     let contextBody: String
+    private var quotaReplies: [String: String] = [:]
     private(set) var visitedPaths: [String] = []
     private(set) var contextAuthorization: String?
     private(set) var quotaHeaders: [[String: String]] = []
+    private(set) var quotaOrganizationHeaders: [String] = []
+    private(set) var headerlessQuotaCount = 0
 
     init(contextStatus: Int = 200, contextBody: String) {
         self.contextStatus = contextStatus
         self.contextBody = contextBody
+    }
+
+    func setQuotaReplies(_ replies: [String: String]) {
+        quotaReplies = replies
     }
 
     func send(_ request: URLRequest) async throws -> ProviderHTTPResponse {
@@ -525,12 +581,19 @@ private actor ZhipuConsoleTransport: ProviderUsageTransport {
             return ProviderHTTPResponse(data: Data(contextBody.utf8),
                                         statusCode: contextStatus, headers: [:], url: request.url!)
         }
+        let organization = request.value(forHTTPHeaderField: "bigmodel-organization")
         var headers: [String: String] = [:]
         for name in ["Authorization", "bigmodel-organization", "bigmodel-project"] {
             headers[name] = request.value(forHTTPHeaderField: name)
         }
         quotaHeaders.append(headers)
-        let body = "{\"code\":200,\"data\":{\"limits\":[{\"unit\":3,\"number\":5,\"usage\":100,\"remaining\":40,\"nextResetTime\":1800007200000}]}}"
+        if let organization {
+            quotaOrganizationHeaders.append(organization)
+        } else {
+            headerlessQuotaCount += 1
+        }
+        let body = quotaReplies[organization ?? ""] ??
+            "{\"code\":200,\"data\":{\"limits\":[{\"unit\":3,\"number\":5,\"usage\":100,\"remaining\":40,\"nextResetTime\":1800007200000}]}}"
         return ProviderHTTPResponse(data: Data(body.utf8), statusCode: 200, headers: [:], url: request.url!)
     }
 }
