@@ -2,8 +2,8 @@
 
 ## Project scope
 
-CodexMeter is a native macOS menu bar app built with SwiftUI. It displays the
-remaining Codex account quota without requiring the user to open Codex.
+CodexMeter is a native macOS menu bar app built with SwiftUI. It displays Codex
+quota and optional platform quotas or balances without opening those clients.
 
 - Support macOS 13 or later.
 - Keep the app menu-bar-only; do not add a normal window or Dock icon unless the
@@ -91,18 +91,22 @@ has changed.
   pause automatic access until manual refresh or sign-in allows authorization.
   Pending credentials are volatile: quitting before persistence completes can
   still require a new sign-in. The service stays disabled under the Debug
-  provider fixture, and `start()` runs because no source switching exists.
+  provider fixture. In normal mode, `start()` runs unconditionally at launch;
+  selecting a menu-bar source does not disable Codex quota.
 - `Core/CodexOAuthClient.swift` contains the pure device-code OAuth protocol and
   `wham/usage` decoding: a no-redirect ephemeral transport, 20-second timeout,
   and a 512-KiB response cap. These endpoints are experimental and undocumented;
   decode defensively and never expose raw responses or tokens.
 - Optional external connections use ProviderUsageCoordinator with independent
   five-minute polling, cancellation, bounded retries, and identity epochs.
-  ProviderUsageModels and ProviderUsageAdapters keep platform decoding separate
-  from the Codex OAuth service. DeepSeek exposes currency balances;
+  Existing popover-open handling already refreshes enabled connections; do not
+  add a duplicate open-triggered fan-out. A manual refresh covers Codex and all
+  enabled external connections, with each service retaining its in-flight
+  guard. ProviderUsageModels and ProviderUsageAdapters keep platform decoding
+  separate from the Codex OAuth service. DeepSeek exposes currency balances;
   MiniMax plan quota is experimental and follows the pinned first-party CLI
   contract. Zhipu is experimental and reads the GLM Coding plan's five-hour and
-  weekly credit windows from the undocumented bigmodel.cn console endpoint
+  weekly quota windows from the undocumented bigmodel.cn console endpoint
   (`/api/monitor/usage/quota/limit?type=2`) with the raw session JWT pasted by
   the user. Team-plan quota is only visible through the console's organization
   context, and the plan may sit under a non-default organization (for example
@@ -113,7 +117,11 @@ has changed.
   organization without a coding plan answers a business error or empty windows
   and advances to the next one. Unit 3 counts hours and unit 6 counts weeks,
   unknown units keep no window timing, and session expiry surfaces as
-  authentication-required.
+  authentication-required. Present Zhipu quota as remaining percentages and
+  progress bars, derived from exact remaining/total credit counts; do not show
+  raw credit amounts or use the console's rounded used-percentage summary.
+  Keep internal acceptance-status banners out of the Zhipu popover and editor;
+  retain fixture, stale, and error indicators and document its experimental API.
   Preserve boost-adjusted base percentages while normalizing progress
   and pace to current plan capacity. Do not infer token usage from quota.
 - ProviderCredentialStore owns only app-created API-key items in its Keychain
@@ -122,14 +130,53 @@ has changed.
   HTTP queries use an ephemeral session, official HTTPS origins only, no
   authenticated cross-origin redirects, a 20-second timeout, and a 512-KiB body
   limit. Never include secrets or raw server messages in diagnostics.
-- ProviderUsageViews adds Platforms & Connections settings and source selection
-  in the popover. Monetary balances use text rather than quota rings. With no
-  connection selected, the popover shows the Codex sign-in state or quota.
-- Debug-only --provider-ui-fixture uses in-memory external credentials and
-  transport with visibly identified sample data. The OAuth service stays
-  disabled in this mode. The additional --provider-ui-fixture-settings argument
-  opens the actual settings scene for isolated UI checks; it has no effect
-  without the Debug fixture flag.
+- `PopoverOverviewSource.visibleSources(from:developerPreviewEnabled:)` builds the
+  compact popover overview: Codex first, then enabled external connections in
+  store order, keeping same-provider connections distinct by UUID. Disabled
+  connections are omitted; enabled sources remain listed when authentication is
+  required or a request fails. The overview summarizes all visible Codex windows
+  and all provider snapshot buckets, never just the selected menu-bar bucket.
+  Each platform gets a divider-separated section whose collapsed summary is a
+  row of small rings with the remaining percentage centered and the window name
+  below each ring; buckets without a percentage (currency amounts, unavailable
+  or unlimited values) render as text rows without rings. Rows are collapsed by
+  default and the expansion set is view-local state, never persisted; the
+  expanded detail shows quota and remaining-time rings plus the existing text
+  details, and DeepSeek pricing periods appear only inside its expanded
+  connection.
+  Keep each source's localized loading/error/stale status and update time
+  independent, even while collapsed, retain its last snapshot on failure, and
+  do not add a selected-source global timestamp. Preserve amount/count/unlimited/
+  unavailable/boost display semantics; never show Zhipu raw credits, and keep
+  Codex percentage rounding consistent with its detail view.
+- `ProviderUsageViews` adds Platforms & Connections settings and the popover's
+  menu-bar source selector. The selector hides its visual label while retaining
+  its localized accessible name and changes only `providers.selectedConnectionID`;
+  it must not filter or reorder overview rows or clear their expansion state.
+  The built-in source displays as Codex without a sign-in-method qualifier.
+  Monetary balances use text rather than quota rings. Keep Codex sign-in and
+  pending-device-code controls reachable from the overview.
+- `Core/DeepSeekPricingSchedule.swift` calculates local Beijing-time pricing
+  periods independently of balance HTTP. Weekday peak intervals are [09:00,
+  12:00) and [14:00, 18:00); weekends (including makeup workdays) and statutory
+  holidays are off-peak. Holiday data covers 2026 and was checked on 2026-10-14;
+  adjusted weekday breaks and uncovered years stay unconfirmed during candidate
+  peak hours. Do not skip unknown boundaries when calculating next-period waits
+  or the continuous current-period start. `DeepSeekPricingPeriodsView` shows
+  time-only wait bars once per DeepSeek connection and recalculates at minute
+  boundaries without requesting balance data. Both bars normalize the remaining
+  wait from the current continuous period start to their own next phase start.
+- Debug-only --provider-ui-fixture uses fake in-memory credentials and a
+  controlled transport only; it performs no real OAuth, Keychain access, or
+  HTTP and visibly labels all sample data, including collapsed rows. The OAuth
+  service stays disabled in this mode. The optional
+  --provider-ui-fixture-scenario=extended variant adds a second DeepSeek
+  connection with a long display name and multiple currencies, an unavailable
+  MiniMax connection that answers once and then keeps timing out (so its row
+  shows a localized error beside a retained stale snapshot), and a
+  disabled connection, still entirely in memory. The additional
+  --provider-ui-fixture-settings argument opens the actual settings scene for
+  isolated UI checks; it has no effect without the Debug fixture flag.
 - `Core/QuotaModels.swift` contains pure quota, remaining-time, and consumption-
   pace calculations shared with the Swift Package unit tests.
 - `AboutView.swift` reads the installed version and build directly from
@@ -137,8 +184,11 @@ has changed.
 - `Core/MenuBarAppearance.swift` contains bounded, codable appearance values and
   deterministic developer preview fixtures, including custom quota/time values.
   `DeveloperOptionsView.swift` provides live appearance tuning without touching
-  account data. Embed it in the shared settings window because a sheet attached
-  to `MenuBarExtra(.window)` disappears when the status item loses focus.
+  account data. Popover developer preview consumes only
+  `settings.developerPreviewSnapshot`, never live quota/provider snapshots, and
+  adds no UI-triggered live requests; normal background timers remain unchanged.
+  Embed it in the shared settings window because a sheet attached to
+  `MenuBarExtra(.window)` disappears when the status item loses focus.
 - `Core/PopoverContentConfiguration.swift` stores presentation-only popover
   visibility per returned quota window plus the stable quota identity used by
   visibility and the menu bar indicator. Quota identity follows the returned
@@ -150,8 +200,9 @@ has changed.
   most constrained returned window; an explicitly chosen window remains
   selected. Visibility is presentation only: hidden windows continue to
   refresh.
-  `PopoverCustomizationView.swift` presents these controls and a live preview in
-  the Menu Bar & Popover settings category.
+  `PopoverCustomizationView.swift` presents these Codex-only controls and a
+  clearly scoped Codex layout preview in the Menu Bar & Popover category.
+  Keep shared menu bar styles separate; they apply to percentage quota sources.
 - `AppSettingsView.swift` owns one resizable settings window with General,
   Platforms & Connections, Menu Bar & Popover, Developer, and About categories.
   The menu bar Settings row opens this window directly; do not expand settings
@@ -169,6 +220,9 @@ has changed.
   appearance.
 - `Localizable.xcstrings` is the source of English, Simplified Chinese, and
   Traditional Chinese user-facing strings.
+  Keep shared quota UI and platform privacy/credential copy source-neutral.
+  Reserve ChatGPT/Codex account language for its OAuth controls and quota layout
+  preferences; preserve the CodexMeter brand, identifiers, and stored preferences.
 
 Do not scrape ChatGPT web pages or read Codex authentication files (such as the
 Codex CLI `auth.json`) directly. The direct device-code sign-in is the single
@@ -184,12 +238,16 @@ Keychain.
 
 - The quota response reports used quota; calculate remaining quota, clamp it to
   `0...100`, and display every returned quota window in the popover.
+- Display all sources' menu-bar and popover percentages as rounded whole numbers
+  (half up); retain internal precision and leave currency formatting unchanged.
 - Separate quota windows, the status header, Settings, and the footer with
   dividers in the popover. Do not add nested card backgrounds around quota
   sections; the menu-bar window already provides the containing surface.
-- In automatic mode, display the lowest remaining percentage across returned
-  quota windows so the most constrained limit is always visible. Preserve an
-  explicit quota-window selection even when another window becomes lower.
+- In automatic menu-bar mode, prefer a five-hour percentage window, then a
+  seven-day window; otherwise use the lowest remaining percentage, with ties
+  resolved by bucket ID. Identify provider windows by duration, not labels.
+  Preserve explicit selections even when missing or another window is lower;
+  leave monetary, unlimited, and unavailable fallbacks unchanged.
 - Label the percentage as Codex remaining quota. Visual state priority is:
   below 20% is critical/red; otherwise above ideal pace is warning/yellow;
   otherwise use the normal system/accent color. Apply the same rule to the
@@ -209,16 +267,18 @@ Keychain.
 
 ## Refresh and freshness rules
 
-- Refresh quota at launch, about every 60 seconds while the popover is closed
+- Refresh Codex at launch, about every 60 seconds while the popover is closed
   (five-second timer tolerance), when the popover opens, and on manual request.
-  Skip a refresh while the previous request is still in flight.
+  Manual refresh covers Codex and every enabled external connection; the
+  independent five-minute provider polling cadence remains unchanged. Skip an
+  overlapping request per source, not based on the menu-bar source selection.
 - Time out a quota or token request after 20 seconds.
-- On failure, retain the last successful quota snapshot and mark it as possibly
-  stale instead of clearing the menu bar.
+- On failure, retain that source's last successful snapshot and mark it as
+  possibly stale instead of clearing the menu bar or other overview rows.
 - Recalculate remaining-time UI locally once per minute without an extra
   network request.
-- Show seconds in the popover's last-updated timestamp so successful refreshes
-  are visible; keep other time formatting unchanged.
+- Show seconds in each source's own popover last-updated timestamp; do not add a
+  selected-source global timestamp. Keep other time formatting unchanged.
 
 ## macOS settings
 
@@ -227,13 +287,25 @@ Keychain.
 - App Sandbox is currently disabled; the reason is historical (the removed App
   Server child process). Revisit this deliberately before any Mac App Store
   distribution work.
-- Compile-only builds may disable code signing, but `SMAppService` testing must
-  use a signed build (Xcode's "Sign to Run Locally" is sufficient for local
-  development).
-- Version 1.6.3 is distributed with an ad-hoc signature and no notarization
+- Normal Debug builds use the fixed local Apple Development identity configured in
+  `CodexMeter.xcodeproj/project.pbxproj` (SHA-1 certificate fingerprint
+  `C5E2E0C2B85E27B5799A32884A10F3F700EE70BF`) and the existing
+  `com.raycal.CodexMeter` bundle identifier. This identity is specific to the
+  development machine; contributors without it must select their own team and
+  certificate. A missing identity must fail the signed build visibly: do not
+  disable signing or fall back to a runnable ad-hoc build. The first switch from
+  an older ad-hoc-signed app may still require one-time Keychain authorization;
+  do not assume an existing ad-hoc ACL migrates automatically. Keep the Debug
+  designated requirement stable through the fixed identity; do not add custom
+  requirements or alter Keychain services, credentials, or ACLs.
+- Compile-only validation may disable code signing, but its output is not a daily
+  runnable app and must not be used for UI or `SMAppService` testing. Those checks
+  require a normally signed Debug build.
+- Version 1.6.3 remains distributed with an ad-hoc signature and no notarization
   because no valid Apple signing identity was available at release time. Do not
-  describe it as Apple Development or Developer ID signed. Replace this with a
-  Developer ID and notarized workflow before claiming frictionless distribution.
+  describe that release as Apple Development or Developer ID signed. Keep the
+  release signing workflow separate; do not claim that this local Debug signing
+  change adds notarization or changes the published release signature.
 - Keep the deployment target at macOS 13 unless a new API requires a later OS.
 
 ## Distribution rules
@@ -244,11 +316,11 @@ Keychain.
   installed app. Source changes do not imply a new release has been published.
 - For ad-hoc releases, run `Scripts/sign_ad_hoc_release.sh` on the built app
   before creating the DMG. It signs and strictly verifies the app bundle.
-- Every rebuild changes the ad-hoc signature, so macOS Keychain treats each
-  build as a new program and may prompt for login-password authorization when
-  the OAuth refresh credential is first read. This is expected; approve once,
-  or sign out and back in to re-home the credential with the current build. A
-  stable signing identity removes the prompt permanently.
+- Rebuilding an ad-hoc-signed app changes its program identity and may prompt for
+  Keychain authorization; this describes the historical ad-hoc local builds, not
+  the fixed-identity Debug build. The first transition from an ad-hoc local app
+  to the fixed Debug signature may still require authorization for the existing
+  OAuth credential. Do not assume the old ad-hoc ACL is automatically migrated.
 
 ## Roadmap / TODO
 
@@ -266,6 +338,8 @@ Keychain.
 - [ ] Add independently verified Kimi and Z.ai adapters, then evaluate other
   platform sources from the integration plan.
 - [ ] Revisit App Sandbox before any Mac App Store distribution.
+- [ ] Update and independently verify DeepSeek statutory-holiday data each year;
+  resolve adjusted weekday-break treatment only with a confirmed official rule.
 
 - [x] Remove the built-in update chain and keep upgrades as manual downloads
   and app replacement through GitHub Releases. Keep Apple notarization as a
@@ -400,7 +474,23 @@ its configured GitHub remote and verify that the remote commit matches local
 `HEAD`. Do not create a commit merely because files changed; this rule applies
 only after a commit has already been requested or created as part of the task.
 
-Build from the repository root with an installed Xcode that supports this project:
+Build the normal signed Debug app from the repository root with an installed Xcode
+that supports this project. This uses the locally pinned Apple Development
+identity; if it is unavailable, the signed build must fail rather than silently
+producing an ad-hoc runnable app.
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild \
+  -project CodexMeter.xcodeproj \
+  -scheme CodexMeter \
+  -configuration Debug \
+  -destination 'platform=macOS' \
+  build
+```
+
+For compile-only validation, code signing may be disabled. This output is not a
+normal runnable development app and must not be used for UI smoke tests or
+`SMAppService` testing:
 
 ```bash
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild \
@@ -413,8 +503,8 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild \
 ```
 
 If the active developer directory points only to Command Line Tools, set
-`DEVELOPER_DIR` to an installed Xcode for that command. Before committing, also
-run the core unit tests and whitespace check. Changes to `MenuBarExtra`, its
+`DEVELOPER_DIR` to an installed Xcode for either command. Before committing,
+also run the core unit tests and whitespace check. Changes to `MenuBarExtra`, its
 label, or the popover layout also require a UI smoke test: launch exactly one
 app instance, click the status item, and confirm the popover opens and its
 controls respond.

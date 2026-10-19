@@ -27,8 +27,9 @@ struct ContentView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var providers: ProviderUsageCoordinator
     @ObservedObject var oauth: CodexOAuthUsageService
-    @Environment(\.openWindow) private var openWindow
+    @Environment(\.colorScheme) private var colorScheme
     @State private var maximumPopoverHeight = PopoverLayoutMetrics.initialMaximumHeight
+    @State private var expandedSources: Set<PopoverOverviewSource.ID> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -60,9 +61,15 @@ struct ContentView: View {
             }
         }
         .onAppear {
-            providers.setPopoverVisible(true)
-            oauth.setPopoverVisible(true)
+            if !settings.developerPreviewEnabled {
+                providers.setPopoverVisible(true)
+                oauth.setPopoverVisible(true)
+            }
             settings.refreshLaunchAtLoginStatus()
+        }
+        .onChange(of: settings.developerPreviewEnabled) { isPreview in
+            providers.setPopoverVisible(!isPreview)
+            oauth.setPopoverVisible(!isPreview)
         }
         .onDisappear {
             providers.setPopoverVisible(false)
@@ -90,25 +97,55 @@ struct ContentView: View {
         }
     }
 
+    private var overviewSources: [PopoverOverviewSource] {
+        PopoverOverviewSource.visibleSources(
+            from: providers.connections,
+            developerPreviewEnabled: settings.developerPreviewEnabled
+        )
+    }
+
     private var scrollableContent: some View {
         VStack(alignment: .leading, spacing: 14) {
             if settings.developerPreviewEnabled {
                 previewModeBanner
             }
 
-            if selectedConnection == nil && !settings.developerPreviewEnabled && oauth.isStale {
-                staleBanner
-            }
-
-            Divider()
-
-            if let connection = selectedConnection {
-                ProviderUsageSection(connection: connection, providers: providers, settings: settings)
-            } else {
-                oauthSection
+            ForEach(overviewSources) { source in
+                Divider()
+                switch source {
+                case .codex:
+                    if settings.developerPreviewEnabled {
+                        DeveloperQuotaOverviewSection(
+                            settings: settings,
+                            isExpanded: expansion(for: source.id)
+                        )
+                    } else {
+                        codexOverview
+                    }
+                case .provider(let connection):
+                    ProviderOverviewSection(
+                        connection: connection,
+                        providers: providers,
+                        settings: settings,
+                        isExpanded: expansion(for: source.id)
+                    )
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func expansion(for id: PopoverOverviewSource.ID) -> Binding<Bool> {
+        Binding(
+            get: { expandedSources.contains(id) },
+            set: { isExpanded in
+                if isExpanded {
+                    expandedSources.insert(id)
+                } else {
+                    expandedSources.remove(id)
+                }
+            }
+        )
     }
 
     private var bottomControls: some View {
@@ -124,43 +161,39 @@ struct ContentView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(L10n.string("app.title"))
-                        .font(.headline)
-
-                    Text(headerAccountDescription)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                Text(L10n.string("app.title"))
+                    .font(.headline)
 
                 Spacer()
 
-                if isSelectedRefreshInFlight {
+                if isRefreshInFlight {
                     ProgressView()
                         .controlSize(.small)
                 }
 
                 Button {
-                    if selectedConnection != nil {
-                        providers.refreshSelected()
-                    } else {
-                        oauth.refresh(reauthorizing: true)
-                    }
+                    guard !settings.developerPreviewEnabled else { return }
+                    oauth.refresh(reauthorizing: true)
+                    providers.refreshAll()
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
                 .buttonStyle(.plain)
-                .help(L10n.string("action.refresh"))
-                .disabled(isSelectedRefreshInFlight)
+                .help(L10n.string("action.refresh_all"))
+                .accessibilityLabel(L10n.string("action.refresh_all"))
+                .disabled(settings.developerPreviewEnabled)
             }
             if showsSourcePicker {
-                Picker(L10n.string("providers.source"), selection: sourceSelection) {
+                Picker(L10n.string("providers.menu_bar_source"), selection: sourceSelection) {
                     Text(L10n.string("oauth.source_title")).tag(nil as String?)
                     ForEach(providers.connections) { connection in
                         Text(connection.name).tag(Optional(connection.id.uuidString))
                     }
                 }
                 .pickerStyle(.menu)
+                .labelsHidden()
+                .accessibilityLabel(L10n.string("providers.menu_bar_source"))
+                .help(L10n.string("providers.menu_bar_source_help"))
                 .disabled(settings.developerPreviewEnabled)
             }
         }
@@ -183,33 +216,11 @@ struct ContentView: View {
         )
     }
 
-    private var headerAccountDescription: String {
-        if selectedConnection != nil { return selectedConnection?.name ?? "" }
-        if let planType = oauth.planType {
-            return L10n.format("account.chatgpt_format", planType.capitalized)
+    private var isRefreshInFlight: Bool {
+        guard !settings.developerPreviewEnabled else { return false }
+        return oauth.isBusy || providers.connections.contains {
+            $0.enabled && providers.statuses[$0.id]?.isLoading == true
         }
-        return L10n.string("oauth.source_title")
-    }
-
-    private var selectedConnection: ProviderConnection? {
-        guard !settings.developerPreviewEnabled else { return nil }
-        return providers.connections.first { $0.id == providers.selectedConnectionID }
-    }
-
-    private var isSelectedRefreshInFlight: Bool {
-        if selectedConnection != nil {
-            return providers.statuses[selectedConnection?.id ?? UUID()]?.isLoading ?? false
-        }
-        return oauth.isBusy
-    }
-
-    private var staleBanner: some View {
-        Label(L10n.string("data.stale"), systemImage: "clock.badge.exclamationmark")
-            .font(.caption)
-            .foregroundStyle(.orange)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(8)
-            .background(.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
     }
 
     private var previewModeBanner: some View {
@@ -234,37 +245,89 @@ struct ContentView: View {
         .background(.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
     }
 
-    private var loadingView: some View {
-        HStack(spacing: 10) {
-            ProgressView()
-                .controlSize(.small)
-            Text(L10n.string("loading.usage"))
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, minHeight: 90)
+    private var visibleOAuthWindows: [CodexUsageWindow] {
+        settings.popoverContent.visibleQuotaWindows(from: oauth.windows)
     }
 
-    private func errorView(_ message: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label(L10n.string("error.cannot_read"), systemImage: "exclamationmark.triangle")
-                .foregroundStyle(.orange)
-            Text(message)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Button(L10n.string("action.retry")) {
-                oauth.refresh()
+    private var codexOverview: some View {
+        PlatformOverviewSection(
+            title: L10n.string("oauth.source_title"),
+            isExpanded: expansion(for: .codex)
+        ) {
+            codexStatus
+        } summary: {
+            if !oauth.windows.isEmpty && visibleOAuthWindows.isEmpty {
+                hiddenWindowsMessage
+            } else {
+                OverviewRingRow {
+                    ForEach(visibleOAuthWindows) { window in
+                        OverviewRingItem(
+                            label: window.name,
+                            value: Double(window.remainingPercent),
+                            tint: quotaAttentionTint(
+                                window.attentionLevel(at: Date()),
+                                appearance: settings.developerAppearance,
+                                colorScheme: colorScheme
+                            )
+                        )
+                    }
+                }
+            }
+        } detail: {
+            oauthSection
+        }
+    }
+
+    private var codexStatus: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            if ProviderUIFixture.isEnabled {
+                Label(L10n.string("oauth.fixture_disabled"), systemImage: "eye.trianglebadge.exclamationmark")
+                    .foregroundStyle(.orange)
+            } else {
+                if let planType = oauth.planType {
+                    Text(L10n.format("account.chatgpt_format", planType.capitalized))
+                        .foregroundStyle(.secondary)
+                }
+                if oauth.deviceCode != nil {
+                    Label(L10n.string("oauth.login_pending"), systemImage: "globe")
+                        .foregroundStyle(.secondary)
+                } else if !oauth.isConnected {
+                    Text(L10n.string("oauth.login_required"))
+                        .foregroundStyle(.secondary)
+                }
+                if oauth.isBusy {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text(L10n.string("loading.usage"))
+                    }
+                    .foregroundStyle(.secondary)
+                }
+                if let message = oauth.errorMessage {
+                    Label(message, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                }
+                if oauth.isStale {
+                    Label(L10n.string("data.stale"), systemImage: "clock.badge.exclamationmark")
+                        .foregroundStyle(.orange)
+                }
+                if oauth.isConnected && !oauth.isBusy && oauth.errorMessage == nil && !oauth.isStale {
+                    Text(L10n.string(oauth.windows.isEmpty ? "providers.status.notQueried" : "providers.status.ready"))
+                        .foregroundStyle(.secondary)
+                }
+                if let updated = oauth.lastUpdated {
+                    OverviewUpdatedAt(date: updated)
+                }
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 90, alignment: .leading)
+        .font(.caption)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
-    private func inlineErrorView(_ message: String) -> some View {
-        Label(message, systemImage: "exclamationmark.triangle")
+    private var hiddenWindowsMessage: some View {
+        Text(L10n.string("quota.windows_hidden"))
             .font(.caption)
-            .foregroundStyle(.orange)
+            .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
@@ -274,52 +337,32 @@ struct ContentView: View {
                 oauthPendingView(code)
             } else if !oauth.isConnected {
                 oauthSignInPrompt
-            } else if let message = oauth.errorMessage, oauth.windows.isEmpty {
-                errorView(message)
             } else if oauth.windows.isEmpty {
-                loadingView
+                if oauth.errorMessage != nil {
+                    Button(L10n.string("action.retry")) {
+                        oauth.refresh(reauthorizing: true)
+                    }
+                    .disabled(oauth.isBusy)
+                }
+            } else if visibleOAuthWindows.isEmpty {
+                hiddenWindowsMessage
             } else {
-                if let message = oauth.errorMessage {
-                    inlineErrorView(message)
-                }
-
                 oauthQuotaList
-
-                if let updated = oauth.lastUpdated {
-                    Text(L10n.format("status.updated_at_format", L10n.formattedDateTime(updated)))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var oauthQuotaList: some View {
+        let windows = visibleOAuthWindows
         // Update countdowns and pace locally every minute without another request.
-        TimelineView(.periodic(from: Date(), by: 60)) { context in
-            VStack(spacing: 16) {
-                ForEach(oauth.windows) { window in
-                    UsageWindowRow(
-                        window: window,
-                        now: context.date,
-                        appearance: settings.developerAppearance
-                    )
-
-                    if window.id != oauth.windows.last?.id {
-                        Divider()
-                    }
-                }
-            }
+        return TimelineView(.periodic(from: Date(), by: 60)) { context in
+            UsageWindowsDetail(windows: windows, now: context.date, appearance: settings.developerAppearance)
         }
     }
 
     private func oauthPendingView(_ code: CodexOAuthDeviceCode) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label(L10n.string("oauth.login_pending"), systemImage: "globe")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
             Text(L10n.format("oauth.user_code_format", code.userCode))
                 .font(.title3.monospaced())
                 .textSelection(.enabled)
@@ -333,45 +376,23 @@ struct ContentView: View {
                 }
             }
         }
-        .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
     }
 
     private var oauthSignInPrompt: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let message = oauth.errorMessage {
-                inlineErrorView(message)
-            }
             Text(L10n.string("oauth.experimental_notice"))
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Button(L10n.string("oauth.login")) { oauth.beginLogin() }
-                .disabled(oauth.isBusy)
+                .disabled(oauth.isBusy || ProviderUIFixture.isEnabled)
         }
-        .frame(maxWidth: .infinity, minHeight: 90, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var footer: some View {
         HStack {
-            if let lastUpdated = selectedLastUpdated {
-                Text(L10n.format(
-                    "status.updated_at_format",
-                    L10n.formattedTime(lastUpdated, includingSeconds: true)
-                ))
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-            } else if selectedConnection != nil {
-                Text(L10n.string("providers.status.notQueried"))
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            } else {
-                Text(L10n.string("oauth.source_title"))
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-
             Spacer()
 
             Button(L10n.string("action.quit")) {
@@ -380,11 +401,6 @@ struct ContentView: View {
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
         }
-    }
-
-    private var selectedLastUpdated: Date? {
-        if let selectedConnection { return providers.snapshots[selectedConnection.id]?.fetchedAt }
-        return oauth.lastUpdated
     }
 }
 
@@ -501,77 +517,106 @@ private struct SettingsSection: View {
     }
 }
 
-/// Displays quota and time on the same 0...100 scale for direct comparison.
-private struct UsageWindowRow: View {
-    let window: CodexUsageWindow
+/// Narrow ring item for the merged all-windows row; tighter than OverviewRingItem
+/// so six rings still fit the 380 pt popover without compression.
+private struct WindowRingItem: View {
+    let label: String
+    let value: Double?
+    let tint: Color
+
+    var body: some View {
+        VStack(spacing: 4) {
+            QuotaRing(value: value, tint: tint, diameter: 34)
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+                .minimumScaleFactor(0.8)
+        }
+        .frame(width: 48)
+    }
+}
+
+/// Every visible window shares one ring row; each window keeps one compact info line.
+private struct UsageWindowsDetail: View {
+    let windows: [CodexUsageWindow]
     let now: Date
     let appearance: MenuBarAppearance
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(window.name)
-                    .font(.subheadline.weight(.semibold))
-
-                Spacer()
-
-                paceLabel
-            }
-
-            MetricBar(
-                label: L10n.string("quota.remaining"),
-                value: Double(window.remainingPercent),
-                tint: quotaTint,
-                symbol: "battery.75percent"
-            )
-
-            MetricBar(
-                label: L10n.string("time.remaining"),
-                value: window.remainingTimePercent(at: now),
-                tint: appearance.timeColor.swiftUIColor(for: colorScheme),
-                symbol: "clock"
-            )
-
-            HStack {
-                if let resetsAt = window.resetsAt {
-                    Label(
-                        L10n.format(
-                            "quota.reset_remaining_format",
-                            L10n.remainingDuration(until: resetsAt, from: now)
-                        ),
-                        systemImage: "hourglass"
+            OverviewRingRow {
+                ForEach(windows) { window in
+                    WindowRingItem(
+                        label: L10n.format("quota.window_quota_format", window.name),
+                        value: Double(window.remainingPercent),
+                        tint: quotaAttentionTint(
+                            window.attentionLevel(at: now),
+                            appearance: appearance,
+                            colorScheme: colorScheme
+                        )
                     )
-                } else {
-                    Label(L10n.string("quota.reset_unavailable"), systemImage: "hourglass")
-                }
-
-                Spacer()
-
-                if let resetsAt = window.resetsAt {
-                    Text(L10n.format(
-                        "quota.reset_format",
-                        L10n.formattedDateTime(resetsAt)
-                    ))
+                    WindowRingItem(
+                        label: L10n.format("quota.window_reset_format", window.name),
+                        value: window.remainingTimePercent(at: now),
+                        tint: appearance.timeColor.swiftUIColor(for: colorScheme)
+                    )
                 }
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+
+            ForEach(windows) { window in
+                windowInfoRow(window)
+            }
         }
         .padding(.vertical, 4)
     }
 
+    private func windowInfoRow(_ window: CodexUsageWindow) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(window.name)
+                .fontWeight(.semibold)
+
+            Spacer(minLength: 8)
+
+            paceLabel(for: window)
+            resetCountdown(for: window)
+
+            if let resetsAt = window.resetsAt {
+                Text(L10n.format("quota.reset_format", L10n.formattedDateTime(resetsAt)))
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+
     @ViewBuilder
-    private var paceLabel: some View {
+    private func resetCountdown(for window: CodexUsageWindow) -> some View {
+        if let resetsAt = window.resetsAt {
+            Label(
+                L10n.format(
+                    "quota.reset_remaining_format",
+                    L10n.remainingDuration(until: resetsAt, from: now)
+                ),
+                systemImage: "hourglass"
+            )
+        } else {
+            Label(L10n.string("quota.reset_unavailable"), systemImage: "hourglass")
+        }
+    }
+
+    @ViewBuilder
+    private func paceLabel(for window: CodexUsageWindow) -> some View {
         switch window.pace(at: now) {
         case .onTrack:
             Label(L10n.string("pace.on_track"), systemImage: "checkmark.circle.fill")
                 .foregroundStyle(.green)
-                .help(paceHelpText)
+                .help(paceHelpText(for: window))
         case .overPace:
             Label(L10n.string("pace.over"), systemImage: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
-                .help(paceHelpText)
+                .help(paceHelpText(for: window))
         case .unavailable:
             Label(L10n.string("pace.unavailable"), systemImage: "questionmark.circle")
                 .foregroundStyle(.secondary)
@@ -579,46 +624,23 @@ private struct UsageWindowRow: View {
         }
     }
 
-    private var paceHelpText: String {
+    private func paceHelpText(for window: CodexUsageWindow) -> String {
         guard let delta = window.paceDelta(at: now) else {
             return L10n.string("pace.unavailable_help")
         }
         return L10n.format("pace.delta_format", delta)
     }
-
-    private var quotaTint: Color {
-        switch window.attentionLevel(at: now) {
-        case .normal: appearance.normalColor.swiftUIColor(for: colorScheme)
-        case .warning: appearance.warningColor.swiftUIColor(for: colorScheme)
-        case .critical: appearance.criticalColor.swiftUIColor(for: colorScheme)
-        }
-    }
 }
 
-private struct MetricBar: View {
-    let label: String
-    let value: Double?
-    let tint: Color
-    let symbol: String
-    @Environment(\.colorScheme) private var colorScheme
-
-    var body: some View {
-        VStack(spacing: 5) {
-            HStack {
-                Label(label, systemImage: symbol)
-                Spacer()
-                Text(value.map { "\(Int($0.rounded()))%" } ?? "—")
-                    .monospacedDigit()
-            }
-            .font(.caption)
-
-            ProgressView(value: value ?? 0, total: 100)
-                .tint(tint)
-                // AppKit reuses this native control across appearance changes
-                // and can reset its tint. Recreate it so SwiftUI reapplies tint.
-                .id(colorScheme)
-                .opacity(value == nil ? 0.25 : 1)
-        }
-        .accessibilityElement(children: .combine)
+/// Shared attention-level tint so summary rings and detail rings never diverge.
+private func quotaAttentionTint(
+    _ level: QuotaAttentionLevel,
+    appearance: MenuBarAppearance,
+    colorScheme: ColorScheme
+) -> Color {
+    switch level {
+    case .normal: appearance.normalColor.swiftUIColor(for: colorScheme)
+    case .warning: appearance.warningColor.swiftUIColor(for: colorScheme)
+    case .critical: appearance.criticalColor.swiftUIColor(for: colorScheme)
     }
 }

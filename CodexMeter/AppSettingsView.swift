@@ -28,7 +28,7 @@ struct AppSettingsView: View {
             Group {
                 switch selection {
                 case "providers.category":
-                    ProviderConnectionsView(providers: providers)
+                    ProviderConnectionsView(providers: providers, settings: settings)
                 case "settings.category.menu":
                     PopoverCustomizationView(oauth: oauth, settings: settings)
                 case "developer.title":

@@ -8,9 +8,15 @@ private final class HarnessCredentials: ProviderCredentialStoreProtocol {
     var failWrite = false
     var failDeletes: Set<String> = []
     var readInteractions: [Bool] = []
+    var readReferences: [String] = []
+    var authorizationRequired: Set<String> = []
     var onDelete: ((String) -> Void)?
     func read(reference: String, allowInteraction: Bool) throws -> String {
         readInteractions.append(allowInteraction)
+        readReferences.append(reference)
+        guard allowInteraction || !authorizationRequired.contains(reference) else {
+            throw ProviderUsageErrorCode.credentialUnavailable
+        }
         guard let value = values[reference] else { throw ProviderUsageErrorCode.credentialMissing }
         return value
     }
@@ -74,6 +80,9 @@ private actor HarnessTransport: ProviderUsageTransport {
     }
     func index(forFixtureKey key: String) -> Int {
         requests.firstIndex { $0.value(forHTTPHeaderField: "Authorization") == "Bearer \(key)" }! + 1
+    }
+    func latestIndex(forFixtureKey key: String) -> Int {
+        requests.lastIndex { $0.value(forHTTPHeaderField: "Authorization") == "Bearer \(key)" }! + 1
     }
     var count: Int { requests.count }
 }
@@ -261,7 +270,274 @@ private struct ProviderCoordinatorHarness {
         check(boostedCoordinator.selectedBucket(for: boostedID)?.metric == .percentage(remaining: 60), "Selected boosted metric preserves base-equivalent amount")
         boostedCoordinator.selectBucket("general:interval", for: boostedID)
         check(boostedCoordinator.selectedBucket(for: boostedID)?.id == "general:interval", "Explicit provider bucket remains selected")
+        try await testRefreshAllFanOut()
+        try await testRefreshAllRetryPolicies()
+        try await testAutomaticBucketPrefersStandardDurations()
         print("Provider coordinator isolated harness passed (fake credentials and HTTP only).")
+    }
+
+    @MainActor
+    private static func testRefreshAllFanOut() async throws {
+        let credentials = HarnessCredentials(), store = HarnessConnections(), clock = HarnessClock()
+        let transport = HarnessTransport()
+        let coordinator = ProviderUsageCoordinator(credentialStore: credentials, connectionStore: store,
+            transport: transport, now: { clock.now() }, automaticTimers: false)
+        try coordinator.saveConnection(kind: .deepSeek, region: .global, name: "All first", key: "fixture-all-first")
+        try coordinator.saveConnection(kind: .miniMax, region: .china, name: "All quota", key: "fixture-all-quota")
+        try coordinator.saveConnection(kind: .deepSeek, region: .global, name: "All second", key: "fixture-all-second")
+        try coordinator.saveConnection(kind: .deepSeek, region: .global, name: "Disabled", key: "fixture-all-disabled", enabled: false)
+        let first = coordinator.connections[0], quota = coordinator.connections[1]
+        let second = coordinator.connections[2], disabled = coordinator.connections[3]
+        let enabledReferences = [first.credentialReference, quota.credentialReference, second.credentialReference]
+        check(coordinator.selectedConnectionID == nil, "Fan-out starts with Codex selected")
+
+        coordinator.refresh(first.id)
+        coordinator.refreshAll()
+        coordinator.refreshAll()
+        coordinator.poll()
+        await wait { await transport.count == 3 }
+        await spin()
+        check(await transport.count == 3, "One busy connection does not block others or duplicate in-flight work")
+        check(credentials.readReferences.sorted() == enabledReferences.sorted(), "Each enabled connection reads its own credential once")
+        check(credentials.readInteractions == [true, true, true], "Default all-source refresh preserves manual authorization")
+        check(coordinator.statuses[disabled.id] == .unavailable(.disabled), "Disabled status stays unchanged")
+        await transport.complete(await transport.latestIndex(forFixtureKey: "fixture-all-first"), amount: "10")
+        await transport.completeJSON(await transport.latestIndex(forFixtureKey: "fixture-all-quota"), json: """
+        {"model_remains":[{"model_name":"general","current_interval_remaining_percent":50,
+         "current_weekly_remaining_percent":40}]}
+        """)
+        await transport.complete(await transport.latestIndex(forFixtureKey: "fixture-all-second"), amount: "30")
+        await wait { await MainActor.run {
+            coordinator.statuses[first.id] == .ready && coordinator.statuses[quota.id] == .ready
+                && coordinator.statuses[second.id] == .ready
+        } }
+        check(coordinator.snapshots.count == 3, "All enabled snapshots publish with no external source selected")
+        check(coordinator.snapshots[first.id]?.buckets.first?.metric == .money(remaining: 10, currency: "USD"), "First balance publishes independently")
+        check(coordinator.snapshots[quota.id]?.buckets.contains { $0.metric == .percentage(remaining: 40) } == true, "Different provider quota publishes independently")
+        check(coordinator.snapshots[second.id]?.buckets.first?.metric == .money(remaining: 30, currency: "USD"), "Same-provider connections remain independent")
+
+        coordinator.selectedConnectionID = second.id
+        coordinator.refreshAll()
+        coordinator.refreshAll()
+        await wait { await transport.count == 6 }
+        await spin()
+        check(await transport.count == 6 && credentials.readReferences.count == 6, "Selection does not filter fan-out or bypass deduplication")
+        await transport.complete(await transport.latestIndex(forFixtureKey: "fixture-all-first"), amount: "11")
+        await transport.completeJSON(await transport.latestIndex(forFixtureKey: "fixture-all-quota"), json: """
+        {"model_remains":[{"model_name":"general","current_interval_remaining_percent":25,
+         "current_weekly_remaining_percent":30}]}
+        """)
+        await transport.complete(await transport.latestIndex(forFixtureKey: "fixture-all-second"), amount: "31")
+        await wait { await MainActor.run {
+            coordinator.statuses[first.id] == .ready && coordinator.statuses[quota.id] == .ready
+                && coordinator.statuses[second.id] == .ready
+        } }
+        check(coordinator.snapshots[first.id]?.buckets.first?.metric == .money(remaining: 11, currency: "USD"), "Nonselected balance still refreshes")
+        check(coordinator.snapshots[quota.id]?.buckets.contains { $0.metric == .percentage(remaining: 25) } == true, "Nonselected provider still refreshes")
+        check(coordinator.snapshots[second.id]?.buckets.first?.metric == .money(remaining: 31, currency: "USD"), "Selected balance also refreshes")
+        check(coordinator.selectedConnectionID == second.id && store.selected == second.id, "Refresh-all preserves menu-bar selection")
+        check(!credentials.readReferences.contains(disabled.credentialReference) && coordinator.snapshots[disabled.id] == nil, "Disabled connection never reads credentials or publishes a snapshot")
+        print("Refresh-all fan-out passed (selection, disabled, in-flight, duplicate calls).")
+    }
+
+    @MainActor
+    private static func testRefreshAllRetryPolicies() async throws {
+        let credentials = HarnessCredentials(), store = HarnessConnections(), clock = HarnessClock()
+        let transport = HarnessTransport()
+        let coordinator = ProviderUsageCoordinator(credentialStore: credentials, connectionStore: store,
+            transport: transport, now: { clock.now() }, automaticTimers: false)
+        try coordinator.saveConnection(kind: .deepSeek, region: .global, name: "Policy first", key: "fixture-policy-first")
+        try coordinator.saveConnection(kind: .deepSeek, region: .global, name: "Policy second", key: "fixture-policy-second")
+        let first = coordinator.connections[0], second = coordinator.connections[1]
+
+        coordinator.refreshAll(manual: false)
+        await wait { await transport.count == 2 }
+        check(credentials.readInteractions == [false, false], "Automatic fan-out forbids credential authorization dialogs")
+        await transport.complete(await transport.latestIndex(forFixtureKey: "fixture-policy-first"), amount: "10")
+        await transport.complete(await transport.latestIndex(forFixtureKey: "fixture-policy-second"), amount: "20")
+        await wait { await MainActor.run { coordinator.statuses[first.id] == .ready && coordinator.statuses[second.id] == .ready } }
+        var publications = 0
+        let observation = coordinator.objectWillChange.sink { publications += 1 }
+        clock.advance(60)
+        coordinator.poll()
+        await spin()
+        check(publications > 0 && credentials.readReferences.count == 2, "Poll publishes the minute clock without reading successful credentials again")
+        check(await transport.count == 2, "Minute clock does not issue extra HTTP requests")
+        withExtendedLifetime(observation) {}
+        clock.advance(239)
+        coordinator.refreshAll(manual: false)
+        await spin()
+        check(await transport.count == 2 && credentials.readReferences.count == 2, "Automatic fan-out respects the five-minute success interval")
+        clock.advance(1)
+        coordinator.poll()
+        await wait { await transport.count == 4 }
+        check(credentials.readInteractions == [false, false, false, false], "Poll delegates automatic refresh without interaction")
+        await transport.fail(await transport.latestIndex(forFixtureKey: "fixture-policy-first"))
+        await transport.complete(await transport.latestIndex(forFixtureKey: "fixture-policy-second"), amount: "21")
+        await wait { await MainActor.run { coordinator.statuses[first.id] == .stale(.network) && coordinator.statuses[second.id] == .ready } }
+        check(coordinator.snapshots[first.id]?.buckets.first?.metric == .money(remaining: 10, currency: "USD"), "One source failure retains its previous snapshot")
+        check(coordinator.snapshots[second.id]?.buckets.first?.metric == .money(remaining: 21, currency: "USD"), "One source failure does not prevent another source publishing")
+        coordinator.refreshAll(manual: false)
+        clock.advance(19)
+        coordinator.refreshAll(manual: false)
+        await spin()
+        check(await transport.count == 4 && credentials.readReferences.count == 4, "Automatic fan-out respects ordinary error backoff")
+        clock.advance(1)
+        coordinator.refreshAll(manual: false)
+        await wait { await transport.count == 5 }
+        check(credentials.readReferences.last == first.credentialReference && credentials.readInteractions.last == false, "Only the due failed source retries automatically")
+        await transport.fail(await transport.latestIndex(forFixtureKey: "fixture-policy-first"))
+        await wait { await MainActor.run { coordinator.statuses[first.id] == .stale(.network) } }
+
+        coordinator.refreshAll()
+        await wait { await transport.count == 7 }
+        check(Array(credentials.readInteractions.suffix(2)) == [true, true], "Manual fan-out retries ordinary errors and allows authorization")
+        await transport.complete(await transport.latestIndex(forFixtureKey: "fixture-policy-first"), status: 401)
+        await transport.complete(await transport.latestIndex(forFixtureKey: "fixture-policy-second"), amount: "22")
+        await wait { await MainActor.run { coordinator.statuses[first.id] == .authRequired && coordinator.statuses[second.id] == .ready } }
+        check(coordinator.snapshots[first.id]?.buckets.first?.metric == .money(remaining: 10, currency: "USD"), "Authentication failure also retains the previous snapshot")
+        clock.advance(1_000)
+        coordinator.refreshAll(manual: false)
+        await wait { await transport.count == 8 }
+        await spin()
+        check(await transport.count == 8 && credentials.readReferences.count == 8, "Authentication-blocked source does not block or join another source's automatic refresh")
+        check(credentials.readReferences.last == second.credentialReference && credentials.readInteractions.last == false, "Authentication-blocked source does not reread credentials automatically")
+        await transport.complete(await transport.latestIndex(forFixtureKey: "fixture-policy-second"), amount: "23")
+        await wait { await MainActor.run { coordinator.statuses[second.id] == .ready } }
+        coordinator.refreshAll()
+        await wait { await transport.count == 10 }
+        await transport.complete(await transport.latestIndex(forFixtureKey: "fixture-policy-first"), status: 429, retryAfter: "600")
+        await transport.complete(await transport.latestIndex(forFixtureKey: "fixture-policy-second"), amount: "24")
+        await wait { await MainActor.run { coordinator.statuses[first.id]?.errorCode == .rateLimited && coordinator.statuses[second.id] == .ready } }
+        let retryAt = clock.now().addingTimeInterval(600)
+        check(coordinator.statuses[first.id] == .rateLimited(until: retryAt), "Retry-After is retained per connection")
+        check(coordinator.snapshots[first.id]?.buckets.first?.metric == .money(remaining: 10, currency: "USD"), "Rate limiting retains the previous snapshot")
+        coordinator.refreshAll()
+        coordinator.refreshAll()
+        await wait { await transport.count == 11 }
+        await spin()
+        check(await transport.count == 11 && credentials.readReferences.count == 11, "Manual fan-out honors Retry-After while refreshing another source once")
+        check(credentials.readReferences.last == second.credentialReference, "Rate-limited credential is not read by manual fan-out")
+        await transport.complete(await transport.latestIndex(forFixtureKey: "fixture-policy-second"), amount: "25")
+        await wait { await MainActor.run { coordinator.statuses[second.id] == .ready } }
+        clock.advance(599)
+        coordinator.refreshAll(manual: false)
+        await wait { await transport.count == 12 }
+        await spin()
+        check(await transport.count == 12 && credentials.readReferences.count == 12, "Automatic fan-out cannot bypass Retry-After before its boundary")
+        check(credentials.readReferences.last == second.credentialReference && credentials.readInteractions.last == false, "Other source remains independently eligible during Retry-After")
+        await transport.complete(await transport.latestIndex(forFixtureKey: "fixture-policy-second"), amount: "26")
+        await wait { await MainActor.run { coordinator.statuses[second.id] == .ready } }
+        clock.advance(1)
+        coordinator.refreshAll()
+        await wait { await transport.count == 14 }
+        await transport.complete(await transport.latestIndex(forFixtureKey: "fixture-policy-first"), amount: "11")
+        await transport.complete(await transport.latestIndex(forFixtureKey: "fixture-policy-second"), amount: "27")
+        await wait { await MainActor.run { coordinator.statuses[first.id] == .ready && coordinator.statuses[second.id] == .ready } }
+        check(coordinator.snapshots[first.id]?.buckets.first?.metric == .money(remaining: 11, currency: "USD"), "Manual retry succeeds exactly at the Retry-After boundary")
+
+        credentials.authorizationRequired = [second.credentialReference]
+        clock.advance(300)
+        coordinator.refreshAll(manual: false)
+        await wait { await transport.count == 15 }
+        check(coordinator.statuses[second.id] == .stale(.credentialUnavailable), "Noninteractive credential failure is isolated to its source")
+        check(Array(credentials.readInteractions.suffix(2)) == [false, false], "Automatic credential failure never escalates to interactive access")
+        check(coordinator.snapshots[second.id]?.buckets.first?.metric == .money(remaining: 27, currency: "USD"), "Credential failure retains the previous snapshot")
+        await transport.complete(await transport.latestIndex(forFixtureKey: "fixture-policy-first"), amount: "12")
+        await wait { await MainActor.run { coordinator.statuses[first.id] == .ready } }
+        let blockedReadCount = credentials.readReferences.count
+        coordinator.refreshAll(manual: false)
+        await spin()
+        check(await transport.count == 15 && credentials.readReferences.count == blockedReadCount, "Automatic fan-out pauses authorization-blocked credential reads")
+        coordinator.refreshAll()
+        await wait { await transport.count == 17 }
+        check(Array(credentials.readInteractions.suffix(2)) == [true, true], "Manual fan-out can authorize a previously blocked credential")
+        await transport.complete(await transport.latestIndex(forFixtureKey: "fixture-policy-first"), amount: "13")
+        await transport.complete(await transport.latestIndex(forFixtureKey: "fixture-policy-second"), amount: "28")
+        await wait { await MainActor.run { coordinator.statuses[first.id] == .ready && coordinator.statuses[second.id] == .ready } }
+        check(coordinator.snapshots[second.id]?.buckets.first?.metric == .money(remaining: 28, currency: "USD"), "Manual authorization recovers the affected source")
+        check(coordinator.connections == [first, second], "Fan-out preserves connection identities and metadata")
+        print("Refresh-all policies passed (cadence, authorization, backoff, Retry-After, isolated stale snapshots).")
+    }
+
+    @MainActor
+    private static func testAutomaticBucketPrefersStandardDurations() async throws {
+        let credentials = HarnessCredentials(), store = HarnessConnections(), clock = HarnessClock()
+        let transport = HarnessTransport()
+        let coordinator = ProviderUsageCoordinator(credentialStore: credentials, connectionStore: store,
+            transport: transport, now: { clock.now() }, automaticTimers: false)
+        try coordinator.saveConnection(kind: .miniMax, region: .china, name: "Window selection", key: "fixture-window-selection")
+        let id = coordinator.connections[0].id
+        @MainActor func publish(_ rows: [String]) async {
+            let requestIndex = await transport.count + 1
+            coordinator.refresh(id)
+            await wait { await transport.count == requestIndex }
+            await transport.completeJSON(requestIndex, json: "{\"model_remains\":[\(rows.joined(separator: ","))]}")
+            await wait { await MainActor.run { coordinator.statuses[id] == .ready } }
+        }
+        let fiveHour = """
+        {"model_name":"higher","current_interval_remaining_percent":81,
+         "start_time":1800000000000,"end_time":1800018000000}
+        """
+        let week = """
+        {"model_name":"lower","current_interval_remaining_percent":49.8,
+         "start_time":1800000000000,"end_time":1800604800000}
+        """
+        let hour = """
+        {"model_name":"hour","current_interval_remaining_percent":1,
+         "start_time":1800000000000,"end_time":1800003600000}
+        """
+        let day = """
+        {"model_name":"day","current_interval_remaining_percent":49.8,
+         "start_time":1800000000000,"end_time":1800086400000}
+        """
+
+        await publish([fiveHour, week])
+        check(coordinator.selectedBucket(for: id)?.id == "higher:interval", "Automatic selection prefers the five-hour 81% window over the weekly 49.8% window")
+        check(coordinator.selectedBucket(for: id)?.metric == .percentage(remaining: 81), "Five-hour selection preserves its precise metric")
+        await publish([week, fiveHour])
+        check(coordinator.selectedBucket(for: id)?.id == "higher:interval", "Five-hour priority does not depend on server ordering or window names")
+        coordinator.selectBucket("lower:interval", for: id)
+        check(coordinator.selectedBucket(for: id)?.id == "lower:interval", "Explicit weekly selection overrides the five-hour default")
+        check(coordinator.selectedBucket(for: id)?.metric == .percentage(remaining: 49.8), "Explicit weekly selection retains internal fractional precision")
+        coordinator.selectBucket("missing:explicit", for: id)
+        check(coordinator.selectedBucket(for: id) == nil, "Invalid explicit selection does not fall back to a standard window")
+        coordinator.selectBucket(nil, for: id)
+        await publish([hour, week])
+        check(coordinator.selectedBucket(for: id)?.id == "lower:interval", "Weekly window wins over a lower nonstandard window when five-hour quota is absent")
+        await publish([day, hour])
+        check(coordinator.selectedBucket(for: id)?.id == "hour:interval", "Nonstandard windows still use the lowest remaining percentage")
+        await publish([
+            """
+            {"model_name":"zeta","current_interval_remaining_percent":81,
+             "start_time":1800000000000,"end_time":1800018000000}
+            """,
+            """
+            {"model_name":"alpha","current_interval_remaining_percent":81,
+             "start_time":1800000000000,"end_time":1800018000000}
+            """,
+            week
+        ])
+        check(coordinator.selectedBucket(for: id)?.id == "alpha:interval", "Equal-priority equal-percentage windows retain stable ID tie-breaking")
+        await publish([
+            "{\"model_name\":\"unavailable\",\"current_interval_status\":9}",
+            "{\"model_name\":\"unlimited\",\"current_interval_status\":3}"
+        ])
+        check(coordinator.selectedBucket(for: id)?.metric == .unlimited, "Unlimited fallback still precedes unavailable metrics")
+
+        try coordinator.saveConnection(kind: .deepSeek, region: .global, name: "Balance selection", key: "fixture-balance-selection")
+        let balanceID = coordinator.connections[1].id
+        let balanceRequest = await transport.count + 1
+        coordinator.refresh(balanceID)
+        await wait { await transport.count == balanceRequest }
+        await transport.completeJSON(balanceRequest, json: """
+        {"balance_infos":[{"currency":"USD","total_balance":"2"},
+                          {"currency":"CNY","total_balance":"10"}]}
+        """)
+        await wait { await MainActor.run { coordinator.statuses[balanceID] == .ready } }
+        check(coordinator.selectedBucket(for: balanceID)?.id == "balance:CNY", "Monetary fallback retains stable ID order instead of comparing amounts")
+        check(coordinator.selectedBucket(for: balanceID)?.metric == .money(remaining: 10, currency: "CNY"), "Monetary selection preserves the unchanged balance")
+        print("Automatic bucket selection passed (five-hour, weekly fallback, ordering, explicit choice, precision, money).")
     }
 
     private static func check(_ condition: Bool, _ message: String) { precondition(condition, message) }

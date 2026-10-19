@@ -21,6 +21,7 @@ final class PopoverContentConfigurationTests: XCTestCase {
         XCTAssertTrue(configuration.isQuotaWindowVisible(fiveHour))
         XCTAssertTrue(configuration.isQuotaWindowVisible(weekly))
         XCTAssertFalse(configuration.isQuotaWindowVisible(reserve))
+        XCTAssertEqual(configuration.visibleQuotaWindows(from: [fiveHour, weekly, reserve]), [fiveHour, weekly])
         XCTAssertNil(configuration.menuBarQuotaWindowID)
     }
 
@@ -36,13 +37,34 @@ final class PopoverContentConfigurationTests: XCTestCase {
         XCTAssertEqual(configuration.visibleQuotaWindows(from: [fiveHour, weekly]), [weekly])
     }
 
-    func testSlotSuffixesDoNotSplitTheSameQuotaBucket() {
+    func testSlotSuffixesAndPresentationChangesDoNotSplitTheSameQuotaBucket() {
         // The quota slots can swap between refreshes, so identity follows the
         // quota bucket and duration instead of the slot position.
         let primary = makeWindow(id: "codex-primary", name: "Weekly", duration: 10_080, used: 10)
-        let secondary = makeWindow(id: "codex-secondary", name: "Weekly", duration: 10_080, used: 40)
+        let secondary = makeWindow(id: "codex-secondary", name: "Renamed weekly limit", duration: 10_080, used: 40)
 
         XCTAssertEqual(primary.historyID, secondary.historyID)
+    }
+
+    func testVisibleQuotaWindowsCanBeEmptyWhenEveryWindowIsHidden() {
+        var configuration = PopoverContentConfiguration.defaultValue
+        let fiveHour = makeWindow(id: "codex-primary", name: "5h", duration: 300, used: 20)
+        let weekly = makeWindow(id: "codex-secondary", name: "Weekly", duration: 10_080, used: 30)
+        configuration.setQuotaWindow(fiveHour, visible: false)
+        configuration.setQuotaWindow(weekly, visible: false)
+
+        XCTAssertEqual(configuration.visibleQuotaWindows(from: [fiveHour, weekly]), [])
+    }
+
+    func testMenuBarWindowSelectionDoesNotChangeVisibleQuotaWindows() {
+        var configuration = PopoverContentConfiguration.defaultValue
+        let fiveHour = makeWindow(id: "codex-primary", name: "5h", duration: 300, used: 20)
+        let weekly = makeWindow(id: "codex-secondary", name: "Weekly", duration: 10_080, used: 30)
+        let expectedVisibleWindows = [fiveHour, weekly]
+
+        XCTAssertEqual(configuration.visibleQuotaWindows(from: [fiveHour, weekly]), expectedVisibleWindows)
+        configuration.menuBarQuotaWindowID = weekly.historyID
+        XCTAssertEqual(configuration.visibleQuotaWindows(from: [fiveHour, weekly]), expectedVisibleWindows)
     }
 
     func testSelectedMenuBarWindowUsesPersistedStableIdentity() {

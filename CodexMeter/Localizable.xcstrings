@@ -130,19 +130,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Codex quota comes from an explicit device-code sign-in. Only the OAuth refresh credential is stored, and it lives in CodexMeter's own Keychain; access tokens stay in memory and are never written to disk, and no local usage database is kept. Optional external connections query the selected platform directly and keep their API keys in macOS Keychain. No inference traffic is proxied."
+            "value": "Quota and balance queries go directly to each platform. Codex uses an explicit device-code sign-in: its refresh credential stays in CodexMeter's own Keychain, and access tokens stay in memory only. API keys and session credentials for other platforms also stay in the app's own Keychain. No local usage database is kept, and no inference traffic is proxied."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Codex 额度来自显式的设备码登录。只有 OAuth 刷新凭据会保存下来，存放在 CodexMeter 自己的钥匙串中；访问令牌只保留在内存里，不会写入磁盘，也不再保留本地使用数据库。可选的外部连接直接查询所选平台，API Key 保存在 macOS 钥匙串中，不代理推理流量。"
+            "value": "额度与余额直接查询各平台。Codex 通过明确的设备码登录：刷新凭据保存在 CodexMeter 自己的钥匙串中，访问令牌仅保留在内存中。其他平台的 API Key 和会话凭据也保存在应用自己的钥匙串中。不保留本地使用数据库，不代理推理流量。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "Codex 額度來自明確的裝置碼登入。只有 OAuth 重新整理憑證會保存下來，存放在 CodexMeter 自己的鑰匙圈中；存取權杖只保留在記憶體裡，不會寫入磁碟，也不再保留本機使用資料庫。可選的外部連線直接查詢所選平台，API Key 儲存在 macOS 鑰匙圈中，不代理推理流量。"
+            "value": "額度與餘額直接查詢各平台。Codex 透過明確的裝置碼登入：重新整理憑證儲存在 CodexMeter 自己的鑰匙圈中，存取權杖僅保留在記憶體中。其他平台的 API Key 與工作階段憑證也儲存在應用程式自己的鑰匙圈中。不保留本機使用資料庫，不代理推理流量。"
           }
         }
       }
@@ -446,6 +446,29 @@
         }
       }
     },
+    "action.refresh_all": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Refresh all sources"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "刷新全部来源"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重新整理全部來源"
+          }
+        }
+      }
+    },
     "action.retry": {
       "extractionState": "stale",
       "localizations": {
@@ -475,19 +498,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Codex Meter"
+            "value": "Usage Overview"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Codex Meter"
+            "value": "额度概览"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "Codex Meter"
+            "value": "額度概覽"
           }
         }
       }
@@ -906,6 +929,282 @@
         }
       }
     },
+    "deepseek.pricing.calendar_unconfirmed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Holiday scope or calendar coverage is unconfirmed; affected times cannot be calculated precisely."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "节假日口径或年度日历待确认，相关时间无法准确计算。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "節假日範圍或年度日曆待確認，相關時間無法準確計算。"
+          }
+        }
+      }
+    },
+    "deepseek.pricing.local_rule": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Calculated using Beijing time and official period rules. Each bar shows remaining wait to its next start, measured from the current continuous period's start."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "按北京时间及官方时段规则计算。进度以当前连续时段开始为基准，表示到各自下次开始的剩余等待时间。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "按北京時間及官方時段規則計算。進度以目前連續時段開始為基準，表示到各自下次開始的剩餘等待時間。"
+          }
+        }
+      }
+    },
+    "deepseek.pricing.next_off_peak": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Until next off-peak period"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "距下次谷时"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "距下次谷時"
+          }
+        }
+      }
+    },
+    "deepseek.pricing.next_peak": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Until next peak period"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "距下次峰时"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "距下次峰時"
+          }
+        }
+      }
+    },
+    "deepseek.pricing.phase_off_peak": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Current period: Off-peak"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前时段：谷时"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目前時段：谷時"
+          }
+        }
+      }
+    },
+    "deepseek.pricing.phase_peak": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Current period: Peak"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前时段：峰时"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目前時段：峰時"
+          }
+        }
+      }
+    },
+    "deepseek.pricing.phase_unconfirmed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pricing period unconfirmed"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "时段待确认"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "時段待確認"
+          }
+        }
+      }
+    },
+    "deepseek.pricing.progress_accessibility_format": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ of wait remaining; %@ until start"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "剩余等待进度 %@；距开始 %@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "剩餘等待進度 %@；距開始 %@"
+          }
+        }
+      }
+    },
+    "deepseek.pricing.progress_unconfirmed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Time progress unavailable"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "时间进度未知"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "時間進度未知"
+          }
+        }
+      }
+    },
+    "deepseek.pricing.rules_link": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Official pricing period rules"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "查看官方时段规则"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "查看官方時段規則"
+          }
+        }
+      }
+    },
+    "deepseek.pricing.time_unconfirmed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Time unconfirmed"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "时间待确认"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "時間待確認"
+          }
+        }
+      }
+    },
+    "deepseek.pricing.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pricing Periods"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "峰谷时段"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "峰谷時段"
+          }
+        }
+      }
+    },
     "developer.caption_font_weight": {
       "extractionState": "stale",
       "localizations": {
@@ -925,6 +1224,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "小字粗細"
+          }
+        }
+      }
+    },
+    "developer.caption_scope_help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Custom caption text applies to Codex. External percentage sources show their platform name."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自定义小字用于 Codex；外部平台的百分比额度显示平台名称。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自訂小字用於 Codex；外部平台的百分比額度顯示平台名稱。"
           }
         }
       }
@@ -1970,19 +2292,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The menu bar is showing local preview data. Notifications still use live account data."
+            "value": "The menu bar is showing local preview data."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "菜单栏正在显示本地模拟数据，通知仍使用真实账户数据。"
+            "value": "菜单栏正在显示本地模拟数据。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "選單列正在顯示本機模擬資料，通知仍使用真實帳戶資料。"
+            "value": "選單列正在顯示本機模擬資料。"
           }
         }
       }
@@ -2121,6 +2443,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "拖動任一滑桿會自動切換為自訂狀態。"
+          }
+        }
+      }
+    },
+    "developer.preview_source": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sample Quota Preview"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模拟额度预览"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模擬額度預覽"
           }
         }
       }
@@ -5029,19 +5374,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Reading Codex quota…"
+            "value": "Loading quota…"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "正在读取 Codex 额度…"
+            "value": "正在加载额度…"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "正在讀取 Codex 額度…"
+            "value": "正在載入額度…"
           }
         }
       }
@@ -5414,6 +5759,29 @@
         }
       }
     },
+    "oauth.fixture_disabled": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sample data. Codex sign-in is disabled in this mode."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "示例数据。此模式下 Codex 登录已停用。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "範例資料。此模式下 Codex 登入已停用。"
+          }
+        }
+      }
+    },
     "oauth.login_required": {
       "extractionState": "manual",
       "localizations": {
@@ -5489,19 +5857,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Codex (Direct)"
+            "value": "Codex"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Codex（直接登录）"
+            "value": "Codex"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "Codex（直接登入）"
+            "value": "Codex"
           }
         }
       }
@@ -5926,19 +6294,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "This removes the connection and its API key from this app. Codex authentication and history are unaffected."
+            "value": "This removes only this connection and its saved credential from the app. Other connections are unaffected."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "将移除此连接及其在本应用中保存的 API Key，不影响 Codex 认证和历史。"
+            "value": "仅移除此连接及其在应用中保存的凭据，不影响其他连接。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "將移除此連線及其在本應用程式中儲存的 API Key，不影響 Codex 驗證與歷史。"
+            "value": "僅移除此連線及其在應用程式中儲存的憑證，不影響其他連線。"
           }
         }
       }
@@ -6633,25 +7001,48 @@
         }
       }
     },
+    "providers.preview_zhipu": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preview · Zhipu quota"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "预览 · 智谱额度"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "預覽 · 智譜額度"
+          }
+        }
+      }
+    },
     "providers.privacy": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "API keys are stored in this app’s macOS Keychain items. Queries go directly to the selected platform’s official usage API. Keys are excluded from history and backups."
+            "value": "API keys and session credentials are stored in this app's own macOS Keychain items. Quota and balance queries go directly to the selected platform's official service."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "API Key 保存在本应用的 macOS 钥匙串项目中，额度查询直接发往所选平台的官方接口。历史和备份不包含密钥。"
+            "value": "API Key 和会话凭据保存在本应用自己的 macOS 钥匙串项目中，额度与余额查询直接发往所选平台的官方服务。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "API Key 儲存在本應用程式的 macOS 鑰匙圈項目中，額度查詢直接傳送至所選平台的官方介面。歷史與備份不包含金鑰。"
+            "value": "API Key 與工作階段憑證儲存在本應用程式自己的 macOS 鑰匙圈項目中，額度與餘額查詢直接傳送至所選平台的官方服務。"
           }
         }
       }
@@ -6662,19 +7053,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Queries platform-reported usage only. Token counting, external history and notifications are not enabled."
+            "value": "Displays only platform-reported quota and balance. No local usage history is recorded, and no notifications are sent."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "仅查询平台返回的额度与余额，暂不提供新增 Token 计数、外部平台历史或提醒。"
+            "value": "仅显示平台返回的额度与余额，不记录本地使用历史，也不发送通知。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "僅查詢平台回傳的額度與餘額，暫不提供新增 Token 計數、外部平台歷史或提醒。"
+            "value": "僅顯示平台回傳的額度與餘額，不記錄本機使用歷史，也不傳送通知。"
           }
         }
       }
@@ -6817,6 +7208,29 @@
         }
       }
     },
+    "providers.replace_session_credential": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New session credential (leave empty to keep current)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新会话凭据（留空保留当前凭据）"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新工作階段憑證（留空保留目前憑證）"
+          }
+        }
+      }
+    },
     "providers.resets_format": {
       "extractionState": "manual",
       "localizations": {
@@ -6909,25 +7323,25 @@
         }
       }
     },
-    "providers.source": {
+    "providers.session_credential": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Connection"
+            "value": "Session credential"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "连接"
+            "value": "会话凭据"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "連線"
+            "value": "工作階段憑證"
           }
         }
       }
@@ -6997,6 +7411,144 @@
           "stringUnit": {
             "state": "translated",
             "value": "無法使用"
+          }
+        }
+      }
+    },
+    "providers.menu_bar_source": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Menu bar source"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "菜单栏来源"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選單列來源"
+          }
+        }
+      }
+    },
+    "providers.menu_bar_source_help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chooses which platform the menu bar indicator follows. The popover keeps showing every platform."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择菜单栏指示器跟随的平台。弹窗仍会显示全部平台。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選擇選單列指示器跟隨的平台。彈出視窗仍會顯示全部平台。"
+          }
+        }
+      }
+    },
+    "providers.preview_disabled": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preview · disabled connection"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "预览 · 已停用连接"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "預覽 · 已停用連線"
+          }
+        }
+      }
+    },
+    "providers.preview_long_name": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preview · DeepSeek multi-currency account with a very long custom name"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "预览 · DeepSeek 多币种账户与超长自定义名称"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "預覽 · DeepSeek 多幣別帳戶與超長自訂名稱"
+          }
+        }
+      }
+    },
+    "providers.preview_unavailable": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preview · MiniMax plan unavailable"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "预览 · MiniMax 套餐不可用"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "預覽 · MiniMax 方案無法使用"
+          }
+        }
+      }
+    },
+    "providers.toggle_details_hint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Expands or collapses details."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "展开或折叠详情。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "展開或摺疊詳情。"
           }
         }
       }
@@ -7204,6 +7756,75 @@
           "stringUnit": {
             "state": "translated",
             "value": "無重置時間"
+          }
+        }
+      }
+    },
+    "quota.window_quota_format": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ quota"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@额度"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@額度"
+          }
+        }
+      }
+    },
+    "quota.window_reset_format": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ reset"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@重置时间"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@重置時間"
+          }
+        }
+      }
+    },
+    "quota.windows_hidden": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "All quota windows are hidden. Restore them in Settings."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "额度窗口已全部隐藏，可在设置中恢复。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "額度視窗已全部隱藏，可在設定中恢復。"
           }
         }
       }
@@ -7904,19 +8525,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Choose which quota windows appear in the menu bar popover and which window drives the menu bar indicator. Changes apply immediately."
+            "value": "Menu bar styles apply to percentage quotas across platforms. The window source, visibility and layout preview below apply only to Codex. Changes apply immediately."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "选择菜单栏面板显示哪些额度窗口，以及菜单栏指示器使用哪个窗口，修改会立即生效。"
+            "value": "菜单栏样式适用于各平台的百分比额度。下方的窗口来源、可见性和布局预览仅适用于 Codex，修改会立即生效。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "選擇選單列面板顯示哪些額度視窗，以及選單列指示器使用哪個視窗，修改會立即生效。"
+            "value": "選單列樣式適用於各平台的百分比額度。下方的視窗來源、可見性與佈局預覽僅適用於 Codex，修改會立即生效。"
           }
         }
       }
@@ -7927,19 +8548,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Menu Bar Indicator"
+            "value": "Codex Indicator Window"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "菜单栏指示器"
+            "value": "Codex 指示器窗口"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "選單列指示器"
+            "value": "Codex 指示器視窗"
           }
         }
       }
@@ -7996,19 +8617,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "No quota windows are currently available."
+            "value": "No Codex quota windows are currently available."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "当前没有可用的额度窗口。"
+            "value": "当前没有可用的 Codex 额度窗口。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "目前沒有可用的額度視窗。"
+            "value": "目前沒有可用的 Codex 額度視窗。"
           }
         }
       }
@@ -8019,19 +8640,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Live Preview"
+            "value": "Codex Layout Preview"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "实时预览"
+            "value": "Codex 布局预览"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "即時預覽"
+            "value": "Codex 佈局預覽"
           }
         }
       }
@@ -8042,19 +8663,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "All optional content is hidden. Settings and Quit remain available."
+            "value": "No Codex quota windows to preview. Settings and Quit remain available."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "所有可选内容均已隐藏，设置和退出仍会保留。"
+            "value": "没有可预览的 Codex 额度窗口，设置和退出仍会保留。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "所有可選內容均已隱藏，設定和結束仍會保留。"
+            "value": "沒有可預覽的 Codex 額度視窗，設定和結束仍會保留。"
           }
         }
       }
@@ -8088,19 +8709,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Restore Default Layout"
+            "value": "Restore Default Codex Layout"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "恢复默认布局"
+            "value": "恢复默认 Codex 布局"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "還原預設佈局"
+            "value": "還原預設 Codex 佈局"
           }
         }
       }
@@ -8111,19 +8732,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Quota source"
+            "value": "Codex quota window"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "额度来源"
+            "value": "Codex 额度窗口"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "額度來源"
+            "value": "Codex 額度視窗"
           }
         }
       }
@@ -8134,19 +8755,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Automatic (lowest remaining)"
+            "value": "Automatic (5-hour, then weekly)"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "自动（剩余最少）"
+            "value": "自动（优先五小时，再周窗口）"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "自動（剩餘最少）"
+            "value": "自動（優先五小時，再週視窗）"
           }
         }
       }
@@ -8157,19 +8778,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Selects the quota window represented by the menu bar percentage and rings."
+            "value": "Selects the Codex quota window represented by the menu bar percentage and rings."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "选择菜单栏百分比和圆环所代表的额度窗口。"
+            "value": "选择菜单栏百分比和圆环所代表的 Codex 额度窗口。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "選擇選單列百分比和圓環所代表的額度視窗。"
+            "value": "選擇選單列百分比和圓環所代表的 Codex 額度視窗。"
           }
         }
       }
@@ -8295,19 +8916,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Visible Quota Windows"
+            "value": "Visible Codex Quota Windows"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "显示的额度窗口"
+            "value": "显示的 Codex 额度窗口"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "顯示的額度視窗"
+            "value": "顯示的 Codex 額度視窗"
           }
         }
       }

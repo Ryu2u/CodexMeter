@@ -449,9 +449,8 @@ nonisolated enum ProviderUsageAdapter {
 
     /// The coding-plan console reports one entry per reset window with the
     /// window's total credits, remaining credits, used percentage, and the
-    /// next reset as epoch milliseconds. `percentage` is used quota, so the
-    /// exact remaining counts drive the metric and the percentage only
-    /// cross-checks.
+    /// next reset as epoch milliseconds. Derive the remaining percentage from
+    /// the exact counts rather than the console's rounded used percentage.
     private static func decodeZhipu(_ body: [String: Any]) throws -> [ProviderUsageBucket] {
         if let code = integer(body["code"]), code != 200 {
             // 1001 is the console's "Authorization missing or rejected" code.
@@ -488,12 +487,10 @@ nonisolated enum ProviderUsageAdapter {
                 counter += 1
             }
             let resetsAt = millisecondsTimestamp(limit["nextResetTime"])
-            // Counts stay exact; the reported integer percentage is only a summary.
             return ProviderUsageBucket(
                 id: id,
                 title: durationMins.map { "\($0)m" } ?? "window",
-                metric: .count(remaining: Int64(remaining.rounded()), unit: "credits"),
-                totalCount: Int64(usage.rounded()),
+                metric: .percentage(remaining: remaining / usage * 100),
                 windowDuration: durationMins.map { Double($0) * 60 },
                 resetsAt: resetsAt
             )

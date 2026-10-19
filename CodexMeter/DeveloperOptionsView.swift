@@ -173,6 +173,11 @@ struct DeveloperOptionsView: View {
                 )
                 .disabled(!settings.developerAppearance.showsCaption)
 
+                Text(L10n.string("developer.caption_scope_help"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
                 Picker(
                     L10n.string("developer.caption_font_weight"),
                     selection: appearanceBinding(\.captionFontWeight)

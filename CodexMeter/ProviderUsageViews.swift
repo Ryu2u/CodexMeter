@@ -63,7 +63,8 @@ enum ProviderUsagePresentation {
         let formatter = NumberFormatter()
         formatter.locale = L10n.locale
         formatter.numberStyle = .percent
-        formatter.maximumFractionDigits = 1
+        formatter.maximumFractionDigits = 0
+        formatter.roundingMode = .halfUp
         return formatter.string(from: NSNumber(value: value / 100)) ?? "--"
     }
 
@@ -192,30 +193,10 @@ struct ProviderUsageSection: View {
     @ObservedObject var settings: AppSettings
     @Environment(\.colorScheme) private var colorScheme
 
-    private var status: ProviderConnectionStatus? { providers.statuses[connection.id] }
     private var snapshot: ProviderUsageSnapshot? { providers.snapshots[connection.id] }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            if ProviderUIFixture.isEnabled {
-                Label(L10n.string("providers.preview"), systemImage: "eye.trianglebadge.exclamationmark")
-                    .font(.caption).foregroundStyle(.orange)
-            }
-            if connection.kind.isExperimental {
-                Label(L10n.string("providers.experimental"), systemImage: "flask")
-                    .font(.caption).foregroundStyle(.orange)
-            }
-            if status?.isStale == true {
-                Label(L10n.string("data.stale"), systemImage: "clock.badge.exclamationmark")
-                    .font(.caption).foregroundStyle(.orange)
-            }
-            if status?.isLoading == true && snapshot == nil {
-                HStack { ProgressView().controlSize(.small); Text(L10n.string("loading.usage")) }
-            } else if status?.errorCode != nil || snapshot == nil {
-                Text(ProviderUsagePresentation.status(status))
-                    .font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
             if let snapshot {
                 if snapshot.buckets.count > 1 || connection.selectedBucketID != nil {
                     Picker(L10n.string("providers.menu_metric"), selection: Binding<String?>(
@@ -241,6 +222,10 @@ struct ProviderUsageSection: View {
                     }
                 }
             }
+            if connection.kind == .deepSeek {
+                Divider()
+                DeepSeekPricingPeriodsView(settings: settings)
+            }
             Text(L10n.string("providers.query_only"))
                 .font(.caption2).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -261,13 +246,23 @@ struct ProviderUsageSection: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let remaining = bucket.remainingPercent {
-                Text(L10n.string("quota.remaining")).font(.caption2).foregroundStyle(.secondary)
-                ProgressView(value: remaining, total: 100)
-                    .tint(quotaTint(bucket, at: date)).id(colorScheme)
+                OverviewRingRow {
+                    OverviewRingItem(
+                        label: L10n.string("quota.remaining"),
+                        value: remaining,
+                        tint: quotaTint(bucket, at: date),
+                        diameter: 44
+                    )
+                    if let time = bucket.remainingTimePercent(at: date) {
+                        OverviewRingItem(
+                            label: L10n.string("providers.remaining_time"),
+                            value: time,
+                            tint: settings.developerAppearance.timeColor.swiftUIColor(for: colorScheme),
+                            diameter: 44
+                        )
+                    }
+                }
                 if let time = bucket.remainingTimePercent(at: date) {
-                    Text(L10n.string("providers.remaining_time")).font(.caption2).foregroundStyle(.secondary)
-                    ProgressView(value: time, total: 100)
-                        .tint(settings.developerAppearance.timeColor.swiftUIColor(for: colorScheme)).id(colorScheme)
                     Text(L10n.string(remaining < time ? "providers.over_pace" : "providers.on_pace"))
                         .font(.caption2).foregroundStyle(.secondary)
                 }
@@ -276,6 +271,9 @@ struct ProviderUsageSection: View {
             }
             if let reset = bucket.resetsAt {
                 Text(L10n.format("providers.resets_format", L10n.remainingDuration(until: reset, from: date)))
+                    .font(.caption2).foregroundStyle(.secondary)
+            } else if bucket.remainingPercent != nil {
+                Text(L10n.string("quota.reset_unavailable"))
                     .font(.caption2).foregroundStyle(.secondary)
             }
         }
@@ -292,6 +290,7 @@ struct ProviderUsageSection: View {
 
 struct ProviderConnectionsView: View {
     @ObservedObject var providers: ProviderUsageCoordinator
+    @ObservedObject var settings: AppSettings
     private struct EditorTarget: Identifiable {
         let id = UUID()
         let connection: ProviderConnection?
@@ -308,8 +307,6 @@ struct ProviderConnectionsView: View {
                         .foregroundStyle(.orange)
                 }
                 Text(L10n.string("providers.privacy"))
-                    .font(.caption).foregroundStyle(.secondary)
-                Text(L10n.string("providers.codex_auth"))
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section(L10n.string("providers.connections")) {
@@ -340,6 +337,11 @@ struct ProviderConnectionsView: View {
                         if let snapshot = providers.snapshots[connection.id] {
                             Text(L10n.format("status.updated_at_format", L10n.formattedDateTime(snapshot.fetchedAt)))
                                 .font(.caption2).foregroundStyle(.secondary)
+                        }
+                        if ProviderUIFixture.isEnabled && connection.kind == .deepSeek {
+                            Label(L10n.string("providers.preview"), systemImage: "eye.trianglebadge.exclamationmark")
+                                .font(.caption).foregroundStyle(.orange)
+                            DeepSeekPricingPeriodsView(settings: settings)
                         }
                     }
                     .padding(.vertical, 4)
@@ -412,12 +414,11 @@ private struct ProviderConnectionEditor: View {
                     Text(L10n.string("providers.minimax_key_help")).font(.caption).foregroundStyle(.secondary)
                 }
                 if kind == .zhipu {
-                    Text(L10n.string("providers.experimental")).font(.caption).foregroundStyle(.orange)
                     Text(L10n.string("providers.zhipu_key_help")).font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 TextField(L10n.string("providers.name"), text: $name)
-                SecureField(L10n.string(connection == nil ? "providers.api_key" : "providers.replace_key"), text: $key)
+                SecureField(L10n.string(credentialLabelKey), text: $key)
                     .textContentType(.password)
                 Toggle(L10n.string("providers.enabled"), isOn: $enabled)
             }
@@ -454,5 +455,12 @@ private struct ProviderConnectionEditor: View {
         .padding(20)
         .frame(width: 470)
         .onDisappear { key = "" }
+    }
+
+    private var credentialLabelKey: String {
+        if kind == .zhipu {
+            return connection == nil ? "providers.session_credential" : "providers.replace_session_credential"
+        }
+        return connection == nil ? "providers.api_key" : "providers.replace_key"
     }
 }

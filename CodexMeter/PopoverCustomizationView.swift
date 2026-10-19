@@ -16,12 +16,15 @@ struct PopoverCustomizationView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            Section(L10n.string("settings.popover.menu_bar_ring")) {
+            Section(L10n.string("settings.menubar_style")) {
                 Picker(L10n.string("settings.menubar_style"), selection: $settings.menuBarStyle) {
                     ForEach(MenuBarDisplayStyle.allCases) { style in
                         Text(style.localizedName).tag(style)
                     }
                 }
+            }
+
+            Section(L10n.string("settings.popover.menu_bar_ring")) {
                 Picker(
                     L10n.string("settings.popover.ring_source"),
                     selection: menuBarWindowSelection
@@ -101,7 +104,7 @@ private struct PopoverContentPreview: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(L10n.string("app.title"))
+                    Text(L10n.string("settings.popover.preview"))
                         .font(.subheadline.weight(.semibold))
                     Text(accountDescription)
                         .font(.caption2)

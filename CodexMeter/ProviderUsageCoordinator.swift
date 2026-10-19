@@ -90,8 +90,12 @@ final class ProviderUsageCoordinator: ObservableObject {
             lastClockPublication = date
             objectWillChange.send()
         }
+        refreshAll(manual: false)
+    }
+
+    func refreshAll(manual: Bool = true) {
         for connection in connections where connection.enabled {
-            refresh(connection.id, manual: false)
+            refresh(connection.id, manual: manual)
         }
     }
 
@@ -130,10 +134,6 @@ final class ProviderUsageCoordinator: ObservableObject {
                 self.completeFailure(failure, connection: connection, requestID: requestID)
             }
         }
-    }
-
-    func refreshSelected() {
-        if let id = selectedConnectionID { refresh(id) }
     }
 
     func saveConnection(
@@ -242,7 +242,14 @@ final class ProviderUsageCoordinator: ObservableObject {
         }
         let percentageBuckets = snapshot.buckets.filter { $0.remainingPercent != nil }
         if !percentageBuckets.isEmpty {
-            return percentageBuckets.min {
+            let standardDurations: [TimeInterval] = [5 * 3_600, 7 * 86_400]
+            let preferredDuration = standardDurations.first { duration in
+                percentageBuckets.contains { $0.windowDuration == duration }
+            }
+            let candidates = percentageBuckets.filter {
+                preferredDuration == nil || $0.windowDuration == preferredDuration
+            }
+            return candidates.min {
                 let left = $0.remainingPercent!, right = $1.remainingPercent!
                 return left == right ? $0.id < $1.id : left < right
             }

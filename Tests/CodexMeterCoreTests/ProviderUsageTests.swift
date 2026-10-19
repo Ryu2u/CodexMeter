@@ -188,7 +188,7 @@ final class ProviderUsageTests: XCTestCase {
         XCTAssertEqual(milliseconds.windowDuration, 18_000)
     }
 
-    func testZhipuDecodesCodingPlanWindowsWithExactCountsAndTiming() throws {
+    func testZhipuDecodesCodingPlanWindowsWithPreciseRemainingPercentagesAndTiming() throws {
         // Captured console response shape; protocol fixture, not a live verified account.
         let snapshot = try decode("""
         {"code":200,"msg":"ok","data":{"level":"pro","limits":[
@@ -199,15 +199,16 @@ final class ProviderUsageTests: XCTestCase {
         ]}}
         """, kind: .zhipu)
         XCTAssertEqual(snapshot.buckets.map(\.id), ["zhipu:300", "zhipu:10080"])
-        XCTAssertEqual(snapshot.buckets[0].metric, .count(remaining: 14396, unit: "credits"))
-        XCTAssertEqual(snapshot.buckets[0].totalCount, 15000)
-        XCTAssertEqual(snapshot.buckets[1].metric, .count(remaining: 55284, unit: "credits"))
-        XCTAssertEqual(snapshot.buckets[1].totalCount, 66000)
+        XCTAssertEqual(snapshot.buckets[0].metric, .percentage(remaining: 14396.0 / 15000 * 100))
+        XCTAssertNil(snapshot.buckets[0].totalCount)
+        XCTAssertEqual(snapshot.buckets[1].metric, .percentage(remaining: 55284.0 / 66000 * 100))
+        XCTAssertNil(snapshot.buckets[1].totalCount)
         XCTAssertEqual(snapshot.buckets[0].windowDuration, 18_000)
         XCTAssertEqual(snapshot.buckets[1].windowDuration, 604_800)
         XCTAssertEqual(snapshot.buckets[0].resetsAt, date.addingTimeInterval(7_200))
         XCTAssertEqual(snapshot.buckets[1].resetsAt, date.addingTimeInterval(604_800))
-        XCTAssertEqual(snapshot.buckets[0].remainingPercent ?? 0, 95.97, accuracy: 0.01)
+        XCTAssertEqual(snapshot.buckets[0].remainingPercent ?? 0, 95.973333333, accuracy: 0.000001)
+        XCTAssertEqual(snapshot.buckets[1].remainingPercent ?? 0, 83.763636363, accuracy: 0.000001)
         XCTAssertTrue(ProviderKind.zhipu.isExperimental)
     }
 
@@ -254,7 +255,7 @@ final class ProviderUsageTests: XCTestCase {
         ]}}
         """, kind: .zhipu)
         XCTAssertEqual(snapshot.buckets.map(\.id), ["zhipu:300", "zhipu:300#2"])
-        XCTAssertEqual(snapshot.buckets[1].metric, .count(remaining: 10, unit: "credits"))
+        XCTAssertEqual(snapshot.buckets[1].metric, .percentage(remaining: 5))
     }
 
     func testZhipuCredentialsAreSessionJWTsWithoutBearerPrefix() throws {
@@ -372,7 +373,8 @@ final class ProviderUsageTests: XCTestCase {
             connection: connection(.zhipu), key: "eyJhbGciOiJIUzUxMiJ9.a.b",
             transport: transport, now: { date })
         XCTAssertEqual(snapshot.buckets.map(\.id), ["zhipu:300"])
-        XCTAssertEqual(snapshot.buckets[0].totalCount, 15000)
+        XCTAssertEqual(snapshot.buckets[0].remainingPercent ?? 0, 66.6, accuracy: 0.000001)
+        XCTAssertNil(snapshot.buckets[0].totalCount)
         let quotaOrgs = await transport.quotaOrganizationHeaders
         XCTAssertEqual(quotaOrgs, ["org-default-fixture", "org-team-fixture"])
     }
