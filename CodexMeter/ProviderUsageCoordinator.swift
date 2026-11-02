@@ -8,6 +8,18 @@ final class ProviderUsageCoordinator: ObservableObject {
     @Published private(set) var snapshots: [UUID: ProviderUsageSnapshot] = [:]
     @Published private(set) var statuses: [UUID: ProviderConnectionStatus] = [:]
     @Published private(set) var configurationError: ProviderUsageErrorCode?
+    /// User-customized popover source order as stable order tokens; empty
+    /// means the default Codex-first, store-order layout.
+    @Published private(set) var overviewOrder: [String] = []
+    /// Codex is an ordinary removable source: the flag controls whether its
+    /// row is enrolled. The OAuth service itself keeps running either way.
+    @Published private(set) var codexEnrolled = true
+    /// Presentational Codex switch mirroring the per-connection overview
+    /// toggles: hidden rows keep polling and stay listed in Settings.
+    @Published private(set) var codexShowsInOverview = true
+
+    /// Whether the popover overview should list the Codex source.
+    var codexVisibleInOverview: Bool { codexEnrolled && codexShowsInOverview }
     @Published var selectedConnectionID: UUID? {
         didSet {
             if let id = selectedConnectionID, !connections.contains(where: { $0.id == id }) {
@@ -25,6 +37,9 @@ final class ProviderUsageCoordinator: ObservableObject {
     private let transport: any ProviderUsageTransport
     private let now: @Sendable () -> Date
     private let automaticTimers: Bool
+    /// Claude connections borrow the on-device Claude Code OAuth token
+    /// instead of a CodexMeter-owned stored key.
+    private let claudeCredentialReader: @MainActor (_ allowInteraction: Bool) throws -> String
     private var configurationReadable = true
     private var refreshStates: [UUID: ProviderRefreshState] = [:]
     private var tasks: [UUID: Task<Void, Never>] = [:]
@@ -38,25 +53,43 @@ final class ProviderUsageCoordinator: ObservableObject {
         connectionStore: (any ProviderConnectionStoreProtocol)? = nil,
         transport: (any ProviderUsageTransport)? = nil,
         now: @escaping @Sendable () -> Date = { Date() },
-        automaticTimers: Bool = true
+        automaticTimers: Bool = true,
+        claudeCredentialReader: (@MainActor (_ allowInteraction: Bool) throws -> String)? = nil
     ) {
         self.credentialStore = credentialStore ?? ProviderCredentialStore()
         self.connectionStore = connectionStore ?? ProviderConnectionStore()
         self.transport = transport ?? ProviderURLSessionTransport()
         self.now = now
         self.automaticTimers = automaticTimers
-        selectedConnectionID = nil
+        self.claudeCredentialReader = claudeCredentialReader ?? { allowInteraction in
+            try ClaudeCodeCredentialStore().readAccessToken(allowInteraction: allowInteraction)
+        }
+        var restoredConnections: [ProviderConnection] = []
+        var restoredSelection: UUID?
+        var restoredOverviewOrder: [String] = []
+        var restoredCodexEnrolled = true
+        var restoredCodexShowsInOverview = true
         do {
-            connections = try self.connectionStore.loadConnections()
+            restoredConnections = try self.connectionStore.loadConnections()
             retiringCredentialReferences = try self.connectionStore.loadRetiringCredentialReferences()
             let selected = self.connectionStore.loadSelectedConnectionID()
-            selectedConnectionID = connections.contains(where: { $0.id == selected }) ? selected : nil
-            for connection in connections where !connection.enabled {
-                statuses[connection.id] = .unavailable(.disabled)
-            }
+            restoredSelection = restoredConnections.contains(where: { $0.id == selected }) ? selected : nil
+            restoredOverviewOrder = self.connectionStore.loadOverviewOrder() ?? []
+            restoredCodexEnrolled = self.connectionStore.loadCodexEnrolled()
+            restoredCodexShowsInOverview = self.connectionStore.loadCodexShowsInOverview()
         } catch {
             configurationReadable = false
             configurationError = .connectionStorage
+        }
+        // Assigning the wrapped value keeps didSet's persistence path from
+        // overwriting the stored selection with nil during every launch.
+        _selectedConnectionID = Published(initialValue: restoredSelection)
+        connections = restoredConnections
+        overviewOrder = restoredOverviewOrder
+        codexEnrolled = restoredCodexEnrolled
+        codexShowsInOverview = restoredCodexShowsInOverview
+        for connection in restoredConnections where !connection.enabled {
+            statuses[connection.id] = .unavailable(.disabled)
         }
     }
 
@@ -106,7 +139,13 @@ final class ProviderUsageCoordinator: ObservableObject {
         refreshStates[id] = state
         statuses[id] = .loading
         let key: String
-        do { key = try credentialStore.read(reference: connection.credentialReference, allowInteraction: manual) }
+        do {
+            // Claude borrows the local Claude Code token on demand; every
+            // other kind reads its CodexMeter-owned stored key.
+            key = connection.kind == .claude
+                ? try claudeCredentialReader(manual)
+                : try credentialStore.read(reference: connection.credentialReference, allowInteraction: manual)
+        }
         catch {
             let code = (error as? ProviderUsageErrorCode) ?? .credentialUnavailable
             completeFailure(ProviderUsageFailure(code: code), connection: connection, requestID: requestID)
@@ -153,7 +192,9 @@ final class ProviderUsageCoordinator: ObservableObject {
               !name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
             throw ProviderUsageErrorCode.invalidConfiguration
         }
-        guard existing != nil || !key.isEmpty else { throw ProviderUsageErrorCode.credentialMissing }
+        // A Claude connection carries no stored secret: it borrows the local
+        // Claude Code token, so an empty key is valid for new connections.
+        guard existing != nil || !key.isEmpty || kind == .claude else { throw ProviderUsageErrorCode.credentialMissing }
         // A different vendor must not receive the previous vendor's retained key.
         if let existing, existing.kind != kind, key.isEmpty { throw ProviderUsageErrorCode.credentialMissing }
         let newReference = !key.isEmpty ? UUID().uuidString : nil
@@ -169,9 +210,14 @@ final class ProviderUsageCoordinator: ObservableObject {
         }
         let identityChanged = existing == nil || newReference != nil
             || existing?.region != region || existing?.kind != kind
+        // A Claude connection stores no secret, but every connection still
+        // needs the unique UUID reference the metadata store validates, so a
+        // new secretless connection mints its own instead of force-unwrapping
+        // an existing one that does not exist.
+        let credentialReference = newReference ?? existing?.credentialReference ?? UUID().uuidString
         let connection = ProviderConnection(
             id: existing?.id ?? UUID(), kind: kind, region: region, name: name, enabled: enabled,
-            credentialReference: newReference ?? existing!.credentialReference,
+            credentialReference: credentialReference,
             identityEpoch: identityChanged ? UUID() : existing!.identityEpoch,
             selectedBucketID: existing?.selectedBucketID
         )
@@ -233,6 +279,94 @@ final class ProviderUsageCoordinator: ObservableObject {
         updated[index].selectedBucketID = bucketID
         do { try connectionStore.saveConnections(updated); connections = updated }
         catch { configurationError = .connectionStorage }
+    }
+
+    /// Every renderable source in its default order. Codex joins only while
+    /// enrolled, so both the settings list and reorder writes stay consistent.
+    private var orderingCandidates: [PopoverOverviewSource] {
+        (codexEnrolled ? [.codex] : []) + connections.map { .provider($0) }
+    }
+
+    var orderedOverviewSources: [PopoverOverviewSource] {
+        PopoverOverviewSource.ordered(
+            orderingCandidates,
+            by: overviewOrder
+        )
+    }
+
+    /// Keyboard and accessibility alternative to dragging the platform handle.
+    func moveOverviewSource(_ id: PopoverOverviewSource.ID, up: Bool) {
+        let ordered = orderedOverviewSources
+        guard let index = ordered.firstIndex(where: { $0.id == id }),
+              ordered.indices.contains(index + (up ? -1 : 1)) else { return }
+        _ = moveOverviewSource(id, relativeTo: ordered[index + (up ? -1 : 1)].id, after: !up)
+    }
+
+    /// Commits only after a drop. Persist before publishing so failed writes
+    /// preserve the old order in both settings and the popover.
+    @discardableResult
+    func moveOverviewSource(
+        _ id: PopoverOverviewSource.ID,
+        relativeTo target: PopoverOverviewSource.ID,
+        after: Bool
+    ) -> Bool {
+        guard configurationReadable else {
+            configurationError = .connectionStorage
+            return false
+        }
+        guard let tokens = PopoverOverviewSource.moving(
+            id, relativeTo: target, after: after,
+            sources: orderingCandidates, order: overviewOrder
+        ) else { return false }
+        do {
+            try connectionStore.saveOverviewOrder(tokens)
+            overviewOrder = tokens
+            return true
+        } catch {
+            configurationError = .connectionStorage
+            return false
+        }
+    }
+
+    /// Enrolls or removes the Codex source row. Persist before publishing so
+    /// a failed write keeps the previous enrollment in both places.
+    func setCodexEnrolled(_ enrolled: Bool) {
+        guard configurationReadable else {
+            configurationError = .connectionStorage
+            return
+        }
+        do {
+            try connectionStore.saveCodexEnrolled(enrolled)
+            codexEnrolled = enrolled
+        } catch { configurationError = .connectionStorage }
+    }
+
+    /// Toggles whether a connection appears in the popover overview. Purely
+    /// presentational: polling, snapshots, and identity stay untouched, and
+    /// the settings list keeps showing every added connection.
+    func setShowsInOverview(_ visible: Bool, for id: UUID) {
+        guard configurationReadable,
+              let index = connections.firstIndex(where: { $0.id == id }) else { return }
+        var updated = connections
+        updated[index].showsInOverview = visible
+        do {
+            try persistConnections(updated, retiring: retiringCredentialReferences)
+            connections = updated
+        } catch { configurationError = .connectionStorage }
+    }
+
+    /// Codex's popover-visibility switch, mirroring the per-connection
+    /// toggles. Persist before publishing so a failed write keeps the
+    /// previous visibility.
+    func setCodexShowsInOverview(_ visible: Bool) {
+        guard configurationReadable else {
+            configurationError = .connectionStorage
+            return
+        }
+        do {
+            try connectionStore.saveCodexShowsInOverview(visible)
+            codexShowsInOverview = visible
+        } catch { configurationError = .connectionStorage }
     }
 
     func selectedBucket(for id: UUID) -> ProviderUsageBucket? {

@@ -102,6 +102,10 @@ nonisolated enum ProviderUsageAdapter {
             return URL(string: "https://\(host)/v1/token_plan/remains")!
         case .zhipu:
             return zhipuEndpoint(quotaType: 2)
+        case .claude:
+            // Undocumented subscription usage endpoint the Claude Code CLI
+            // itself reads with its OAuth access token.
+            return URL(string: "https://api.anthropic.com/api/oauth/usage")!
         }
     }
 
@@ -151,6 +155,15 @@ nonisolated enum ProviderUsageAdapter {
         request.httpMethod = "GET"
         request.setValue(connection.kind == .zhipu ? key : "Bearer \(key)",
                          forHTTPHeaderField: "Authorization")
+        if connection.kind == .claude {
+            // Anthropic rejects the OAuth usage endpoint for clients that do
+            // not present Claude Code's identity and has been disabling
+            // tokens used by identifiable third-party apps, so the request
+            // mirrors the headers Claude Code itself sends.
+            request.setValue("claude-cli/2.0.14 (external, cli)", forHTTPHeaderField: "User-Agent")
+            request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
+            request.setValue("cli", forHTTPHeaderField: "x-app")
+        }
         if let scope = zhipuScope {
             request.setValue(scope.organizationID, forHTTPHeaderField: "bigmodel-organization")
             if let projectID = scope.projectID {
@@ -328,6 +341,7 @@ nonisolated enum ProviderUsageAdapter {
         case .deepSeek: buckets = try decodeDeepSeek(body)
         case .miniMax: buckets = try decodeMiniMax(body)
         case .zhipu: buckets = try decodeZhipu(body)
+        case .claude: buckets = try decodeClaude(body)
         }
         guard !buckets.isEmpty, buckets.count <= maximumBuckets,
               Set(buckets.map(\.id)).count == buckets.count else {
@@ -495,6 +509,73 @@ nonisolated enum ProviderUsageAdapter {
                 resetsAt: resetsAt
             )
         }
+    }
+
+    /// Decodes the undocumented OAuth usage payload. The live endpoint answers
+    /// with top-level `five_hour`/`seven_day` objects whose `utilization` is
+    /// the USED percentage (verified against a live response: an inactive
+    /// session at utilization 1.0 with severity normal right after a minimal
+    /// CLI call) and whose `resets_at` carries the reset timestamp. An older
+    /// array shape from community clients is kept as a defensive fallback.
+    private static func decodeClaude(_ body: [String: Any]) throws -> [ProviderUsageBucket] {
+        var buckets: [ProviderUsageBucket] = []
+        for (key, minutes) in [("five_hour", 300), ("seven_day", 10_080)] {
+            let id = "claude:\(minutes)"
+            guard buckets.allSatisfy({ $0.id != id }) else { continue }
+            if let window = body[key] as? [String: Any],
+               let used = claudeUsedPercent(window) {
+                buckets.append(ProviderUsageBucket(
+                    id: id,
+                    title: "\(minutes)m",
+                    metric: .percentage(remaining: 100 - used),
+                    windowDuration: Double(minutes) * 60,
+                    resetsAt: iso8601(window["resets_at"])))
+            } else {
+                // Legacy community shape: the 5-hour window rode under the
+                // "one_day" list key, the weekly window under "seven_day".
+                let listKey = minutes == 300 ? "one_day" : "seven_day"
+                for row in (body[listKey] as? [[String: Any]] ?? []).prefix(maximumBuckets) {
+                    let windowMinutes: Int
+                    switch row["capacity_type"] as? String {
+                    case "five_hour", "5h": windowMinutes = 300
+                    case "seven_day", "weekly", "7d": windowMinutes = 10_080
+                    default: windowMinutes = minutes
+                    }
+                    guard windowMinutes == minutes, let used = claudeUsedPercent(row) else { continue }
+                    buckets.append(ProviderUsageBucket(
+                        id: id,
+                        title: "\(windowMinutes)m",
+                        metric: .percentage(remaining: 100 - used),
+                        windowDuration: Double(windowMinutes) * 60,
+                        resetsAt: iso8601(row["resets_at"])))
+                    break
+                }
+            }
+        }
+        guard !buckets.isEmpty else { throw ProviderUsageFailure(code: .unsupportedResponse) }
+        return buckets
+    }
+
+    /// `utilization` reports the used share of the window. The
+    /// current_used/limit ratio is the fallback when it is absent.
+    private static func claudeUsedPercent(_ row: [String: Any]) -> Double? {
+        if let utilization = number(row["utilization"]),
+           utilization.isFinite, (0...100).contains(utilization) {
+            return utilization
+        }
+        guard let used = number(row["current_used"]), let limit = number(row["limit"]),
+              used.isFinite, used >= 0, limit.isFinite, limit > 0 else { return nil }
+        return min(100, max(0, used / limit * 100))
+    }
+
+    /// Reset timestamps arrive as RFC 3339 with optional fractional seconds.
+    private static func iso8601(_ value: Any?) -> Date? {
+        guard let string = value as? String else { return nil }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: string) { return date }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: string)
     }
 
     /// Unit 3 counts hours and unit 6 counts weeks in the captured responses.

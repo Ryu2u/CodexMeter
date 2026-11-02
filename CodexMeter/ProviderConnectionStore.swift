@@ -8,6 +8,12 @@ protocol ProviderConnectionStoreProtocol {
     func saveSelectedConnectionID(_ id: UUID?) throws
     func loadRetiringCredentialReferences() throws -> [String]
     func saveConnections(_ connections: [ProviderConnection], retiringCredentialReferences: [String]) throws
+    func loadOverviewOrder() -> [String]?
+    func saveOverviewOrder(_ order: [String]) throws
+    func loadCodexEnrolled() -> Bool
+    func saveCodexEnrolled(_ enrolled: Bool) throws
+    func loadCodexShowsInOverview() -> Bool
+    func saveCodexShowsInOverview(_ visible: Bool) throws
 }
 
 extension ProviderConnectionStoreProtocol {
@@ -15,6 +21,12 @@ extension ProviderConnectionStoreProtocol {
     func saveConnections(_ connections: [ProviderConnection], retiringCredentialReferences: [String]) throws {
         try saveConnections(connections)
     }
+    func loadOverviewOrder() -> [String]? { nil }
+    func saveOverviewOrder(_ order: [String]) throws {}
+    func loadCodexEnrolled() -> Bool { true }
+    func saveCodexEnrolled(_ enrolled: Bool) throws {}
+    func loadCodexShowsInOverview() -> Bool { true }
+    func saveCodexShowsInOverview(_ visible: Bool) throws {}
 }
 
 /// The namespace contains metadata and selection only, never credential values.
@@ -23,6 +35,9 @@ final class ProviderConnectionStore: ProviderConnectionStoreProtocol {
     private let defaults: UserDefaults
     private let connectionsKey = "providers.v1.connections"
     private let selectionKey = "providers.v1.selectedConnectionID"
+    private let overviewOrderKey = "providers.v1.overviewOrder"
+    private let codexEnrolledKey = "providers.v1.codexEnrolled"
+    private let codexShowsInOverviewKey = "providers.v1.codexShowsInOverview"
     static let maximumConnections = 32
 
     private struct Metadata: Codable {
@@ -74,6 +89,40 @@ final class ProviderConnectionStore: ProviderConnectionStoreProtocol {
 
     func saveSelectedConnectionID(_ id: UUID?) throws {
         try persist(id?.uuidString, forKey: selectionKey)
+    }
+
+    func loadOverviewOrder() -> [String]? {
+        defaults.stringArray(forKey: overviewOrderKey)
+    }
+
+    func saveOverviewOrder(_ order: [String]) throws {
+        // Codex plus every connection; anything else cannot be rendered.
+        guard order.count <= Self.maximumConnections + 1,
+              Set(order).count == order.count,
+              order.allSatisfy({ PopoverOverviewSource.id(forOrderToken: $0) != nil }) else {
+            throw ProviderUsageErrorCode.connectionStorage
+        }
+        try persist(order, forKey: overviewOrderKey)
+    }
+
+    /// Codex is an ordinary removable source; the flag only controls whether
+    /// its row is enrolled. Absent means enrolled for pre-shell installs.
+    func loadCodexEnrolled() -> Bool {
+        defaults.object(forKey: codexEnrolledKey) == nil ? true : defaults.bool(forKey: codexEnrolledKey)
+    }
+
+    func saveCodexEnrolled(_ enrolled: Bool) throws {
+        try persist(enrolled, forKey: codexEnrolledKey)
+    }
+
+    /// Absent means shown, matching the connection-level field's semantics.
+    func loadCodexShowsInOverview() -> Bool {
+        defaults.object(forKey: codexShowsInOverviewKey) == nil
+            ? true : defaults.bool(forKey: codexShowsInOverviewKey)
+    }
+
+    func saveCodexShowsInOverview(_ visible: Bool) throws {
+        try persist(visible, forKey: codexShowsInOverviewKey)
     }
 
     private func persist(_ value: Any?, forKey key: String) throws {

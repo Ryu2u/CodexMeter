@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Pricing time bars stay independent of the platform's monetary balance.
+/// The pricing wait bar stays independent of the platform's monetary balance.
 struct DeepSeekPricingPeriodsView: View {
     @ObservedObject var settings: AppSettings
     @Environment(\.colorScheme) private var colorScheme
@@ -15,18 +15,28 @@ struct DeepSeekPricingPeriodsView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text(L10n.string("deepseek.pricing.title"))
                     .font(.subheadline.weight(.semibold))
-                Label(phaseTitle(snapshot.phase), systemImage: phaseSymbol(snapshot.phase))
+                Label(snapshot.phase.localizedTitle, systemImage: snapshot.phase.symbolName)
                     .font(.caption)
-                    .foregroundStyle(phaseColor(snapshot.phase))
-                waitRow(titleKey: "deepseek.pricing.next_peak", target: snapshot.nextPeakAt,
-                        fraction: snapshot.peakWaitFraction,
-                        tint: settings.developerAppearance.warningColor.swiftUIColor(for: colorScheme),
+                    .foregroundStyle(snapshot.phase.phaseColor(
+                        for: settings.developerAppearance, colorScheme: colorScheme))
+                // Exactly one bar: it counts down to whatever ends the current
+                // phase, so peak waits for off-peak and vice versa.
+                if let transition = snapshot.currentPhaseTransition {
+                    waitRow(
+                        titleKey: transition.phase == .peak
+                            ? "deepseek.pricing.next_peak"
+                            : "deepseek.pricing.next_off_peak",
+                        target: transition.at,
+                        fraction: transition.waitFraction,
+                        tint: transition.phase == .peak
+                            ? settings.developerAppearance.warningColor.swiftUIColor(for: colorScheme)
+                            : settings.developerAppearance.timeColor.swiftUIColor(for: colorScheme),
                         at: context.date)
-                waitRow(titleKey: "deepseek.pricing.next_off_peak", target: snapshot.nextOffPeakAt,
-                        fraction: snapshot.offPeakWaitFraction,
-                        tint: settings.developerAppearance.timeColor.swiftUIColor(for: colorScheme),
-                        at: context.date)
+                }
                 Text(L10n.string("deepseek.pricing.local_rule"))
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(L10n.string("deepseek.menubar.ring_help"))
                     .font(.caption2).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if snapshot.phase == .unconfirmed || snapshot.currentPhaseStart == nil
@@ -63,27 +73,29 @@ struct DeepSeekPricingPeriodsView: View {
             }
         }
     }
+}
 
-    private func phaseTitle(_ phase: DeepSeekPricingPhase) -> String {
-        switch phase {
+extension DeepSeekPricingPhase {
+    var localizedTitle: String {
+        switch self {
         case .peak: L10n.string("deepseek.pricing.phase_peak")
         case .offPeak: L10n.string("deepseek.pricing.phase_off_peak")
         case .unconfirmed: L10n.string("deepseek.pricing.phase_unconfirmed")
         }
     }
 
-    private func phaseSymbol(_ phase: DeepSeekPricingPhase) -> String {
-        switch phase {
+    var symbolName: String {
+        switch self {
         case .peak: "sun.max.fill"
         case .offPeak: "moon.fill"
         case .unconfirmed: "questionmark.circle"
         }
     }
 
-    private func phaseColor(_ phase: DeepSeekPricingPhase) -> Color {
-        switch phase {
-        case .peak, .unconfirmed: settings.developerAppearance.warningColor.swiftUIColor(for: colorScheme)
-        case .offPeak: settings.developerAppearance.timeColor.swiftUIColor(for: colorScheme)
+    func phaseColor(for appearance: MenuBarAppearance, colorScheme: ColorScheme) -> Color {
+        switch self {
+        case .peak, .unconfirmed: appearance.warningColor.swiftUIColor(for: colorScheme)
+        case .offPeak: appearance.timeColor.swiftUIColor(for: colorScheme)
         }
     }
 }

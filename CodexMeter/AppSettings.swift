@@ -180,6 +180,15 @@ final class AppSettings: ObservableObject {
     }
 
     @Published private(set) var launchAtLoginEnabled = false
+    @Published var codexSubscriptionExpiration: Date? {
+        didSet {
+            if let codexSubscriptionExpiration {
+                defaults.set(codexSubscriptionExpiration, forKey: Keys.codexSubscriptionExpiration)
+            } else {
+                defaults.removeObject(forKey: Keys.codexSubscriptionExpiration)
+            }
+        }
+    }
     @Published var settingsError: String?
     @Published var settingsDestination: SettingsDestination?
 
@@ -196,6 +205,7 @@ final class AppSettings: ObservableObject {
         static let developerPreviewPreset = "developer.previewPreset"
         static let developerPreviewRemainingPercent = "developer.previewRemainingPercent"
         static let developerPreviewRemainingTimePercent = "developer.previewRemainingTimePercent"
+        static let codexSubscriptionExpiration = "codex.subscriptionExpiration"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -255,6 +265,7 @@ final class AppSettings: ObservableObject {
             key: Keys.developerPreviewRemainingTimePercent,
             fallback: 55
         )
+        codexSubscriptionExpiration = defaults.object(forKey: Keys.codexSubscriptionExpiration) as? Date
         L10n.setLanguage(language.languageCode)
         refreshLaunchAtLoginStatus()
     }

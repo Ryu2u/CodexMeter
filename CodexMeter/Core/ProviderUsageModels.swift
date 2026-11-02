@@ -4,9 +4,10 @@ nonisolated enum ProviderKind: String, Codable, CaseIterable, Identifiable, Send
     case deepSeek
     case miniMax
     case zhipu
+    case claude
 
     var id: String { rawValue }
-    var isExperimental: Bool { self == .miniMax || self == .zhipu }
+    var isExperimental: Bool { self != .deepSeek }
 }
 
 nonisolated enum ProviderRegion: String, Codable, CaseIterable, Identifiable, Sendable {
@@ -26,6 +27,12 @@ nonisolated struct ProviderConnection: Codable, Identifiable, Equatable, Sendabl
     var credentialReference: String
     var identityEpoch: UUID
     var selectedBucketID: String?
+    /// Purely presentational: hidden connections keep polling in the
+    /// background and stay listed in Settings. Nil means shown, so installs
+    /// from before this field existed decode as visible.
+    var showsInOverview: Bool? = nil
+
+    var isShownInOverview: Bool { showsInOverview ?? true }
 }
 
 nonisolated enum ProviderUsageMetric: Equatable, Sendable {
@@ -79,6 +86,23 @@ nonisolated struct ProviderUsageBucket: Identifiable, Equatable, Sendable {
     }
 }
 
+/// Decides how a bucket's raw title combines with its window duration for
+/// display. Some adapters (Zhipu) title windows with the bare length
+/// ("300m"), which merely repeats the duration and can be replaced by the
+/// localized label. Any other title identifies the window itself (MiniMax
+/// model names) and must survive beside the duration so multi-model
+/// accounts stay distinguishable.
+nonisolated enum ProviderUsageTitleRule {
+    /// True when the raw title is exactly the window length in minutes.
+    static func rawTitleRepeatsDuration(_ title: String, windowDuration: TimeInterval) -> Bool {
+        guard title.hasSuffix("m"), title.count <= 8,
+              let minutes = TimeInterval(title.dropLast()) else {
+            return false
+        }
+        return abs(minutes * 60 - windowDuration) < 0.5
+    }
+}
+
 nonisolated struct ProviderUsageSnapshot: Equatable, Sendable {
     let buckets: [ProviderUsageBucket]
     let fetchedAt: Date
@@ -99,6 +123,9 @@ nonisolated enum ProviderUsageErrorCode: String, Error, Codable, CaseIterable, S
     case disabled
     case credentialStorage
     case connectionStorage
+    /// The on-device credential source a connection depends on (for example
+    /// the local Claude Code sign-in) is absent or not yet authorized.
+    case localCredentialMissing
 }
 
 nonisolated enum ProviderConnectionStatus: Equatable, Sendable {
@@ -127,6 +154,21 @@ nonisolated enum ProviderConnectionStatus: Equatable, Sendable {
     var retryAt: Date? {
         if case .rateLimited(let until) = self { return until }
         return nil
+    }
+
+    /// Localization key for the failure this status reports, or nil when the
+    /// status has none to show (rate limiting renders its own retry time).
+    /// Claude borrows the local Claude Code token, so its rejection is fixed
+    /// by opening Claude Code once rather than by editing a key here.
+    func failureMessageKey(for kind: ProviderKind) -> String? {
+        switch self {
+        case .stale(let code), .unavailable(let code): return "providers.error.\(code.rawValue)"
+        case .authRequired:
+            return kind == .claude
+                ? "providers.error.claudeTokenExpired"
+                : "providers.error.authentication"
+        case .loading, .ready, .rateLimited: return nil
+        }
     }
 }
 
@@ -165,7 +207,8 @@ nonisolated struct ProviderRefreshState: Sendable {
 
     mutating func failed(at date: Date, code: ProviderUsageErrorCode, retryAt: Date? = nil) {
         requestID = nil
-        if code == .authentication || code == .credentialMissing || code == .credentialUnavailable {
+        if code == .authentication || code == .credentialMissing
+            || code == .credentialUnavailable || code == .localCredentialMissing {
             authenticationBlocked = true
             retryAfter = nil
             return

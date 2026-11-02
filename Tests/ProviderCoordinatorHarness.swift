@@ -1,4 +1,4 @@
-// Compile this isolated harness with the five provider source files; it never accesses real credentials or APIs.
+// Compile this isolated harness with Core and the provider store/coordinator sources; it never accesses real credentials or APIs.
 import Combine
 import Foundation
 
@@ -37,6 +37,8 @@ private final class HarnessConnections: ProviderConnectionStoreProtocol {
     var selected: UUID?
     var failWrite = false
     var retiring: [String] = []
+    var overviewOrder: [String]?
+    var overviewWrites = 0
     func loadConnections() throws -> [ProviderConnection] { values }
     func saveConnections(_ connections: [ProviderConnection]) throws {
         guard !failWrite else { throw ProviderUsageErrorCode.connectionStorage }
@@ -45,6 +47,12 @@ private final class HarnessConnections: ProviderConnectionStoreProtocol {
     func loadSelectedConnectionID() -> UUID? { selected }
     func saveSelectedConnectionID(_ id: UUID?) throws { selected = id }
     func loadRetiringCredentialReferences() throws -> [String] { retiring }
+    func loadOverviewOrder() -> [String]? { overviewOrder }
+    func saveOverviewOrder(_ order: [String]) throws {
+        guard !failWrite else { throw ProviderUsageErrorCode.connectionStorage }
+        overviewOrder = order
+        overviewWrites += 1
+    }
     func saveConnections(_ connections: [ProviderConnection], retiringCredentialReferences: [String]) throws {
         try saveConnections(connections)
         retiring = retiringCredentialReferences
@@ -273,7 +281,54 @@ private struct ProviderCoordinatorHarness {
         try await testRefreshAllFanOut()
         try await testRefreshAllRetryPolicies()
         try await testAutomaticBucketPrefersStandardDurations()
+        try await testPlatformOrderPersistence()
         print("Provider coordinator isolated harness passed (fake credentials and HTTP only).")
+    }
+
+    @MainActor
+    private static func testPlatformOrderPersistence() async throws {
+        let credentials = HarnessCredentials(), store = HarnessConnections()
+        let transport = HarnessTransport()
+        let first = ProviderConnection(
+            id: UUID(), kind: .deepSeek, region: .global, name: "Same", enabled: false,
+            credentialReference: UUID().uuidString, identityEpoch: UUID(), selectedBucketID: "balance:CNY"
+        )
+        let second = ProviderConnection(
+            id: UUID(), kind: .deepSeek, region: .global, name: "Same", enabled: false,
+            credentialReference: UUID().uuidString, identityEpoch: UUID(), selectedBucketID: nil
+        )
+        store.values = [first, second]
+        store.selected = first.id
+        store.overviewOrder = [second.id.uuidString, "codex", first.id.uuidString]
+        let coordinator = ProviderUsageCoordinator(
+            credentialStore: credentials, connectionStore: store,
+            transport: transport, automaticTimers: false
+        )
+        check(coordinator.orderedOverviewSources.map(\.orderToken) == store.overviewOrder, "Settings restores persisted source order")
+        check(coordinator.moveOverviewSource(.codex, relativeTo: .provider(first.id), after: true), "Valid drop commits")
+        let saved = [second.id.uuidString, first.id.uuidString, "codex"]
+        check(store.overviewOrder == saved && coordinator.overviewOrder == saved, "Persisted and published order agree")
+        check(coordinator.connections == [first, second] && store.values == [first, second], "Ordering preserves connection identities, metadata and store order")
+        check(coordinator.selectedConnectionID == first.id && store.selected == first.id, "Ordering preserves menu-bar source selection")
+        store.failWrite = true
+        check(!coordinator.moveOverviewSource(.provider(first.id), relativeTo: .provider(second.id), after: false), "Failed drop save is reported")
+        check(coordinator.overviewOrder == saved && store.overviewOrder == saved, "Failed save retains previous published and stored order")
+        check(coordinator.configurationError == .connectionStorage, "Failed order save is visible")
+        store.failWrite = false
+        let writes = store.overviewWrites
+        check(!coordinator.moveOverviewSource(.codex, relativeTo: .codex, after: false), "Self drop is ignored")
+        check(!coordinator.moveOverviewSource(.provider(UUID()), relativeTo: .codex, after: false), "Deleted source is ignored")
+        check(!coordinator.moveOverviewSource(.codex, relativeTo: .provider(UUID()), after: true), "Deleted destination is ignored")
+        check(!coordinator.moveOverviewSource(.codex, relativeTo: .provider(first.id), after: true), "Unchanged adjacent position is ignored")
+        check(store.overviewWrites == writes, "Ignored drops never persist")
+        let restored = ProviderUsageCoordinator(
+            credentialStore: credentials, connectionStore: store,
+            transport: transport, automaticTimers: false
+        )
+        check(restored.orderedOverviewSources.map(\.orderToken) == saved, "New coordinator restores saved display order")
+        check(restored.selectedConnectionID == first.id && credentials.readReferences.isEmpty, "Restoration preserves selection without credential reads")
+        check(await transport.count == 0, "Reordering makes no HTTP requests")
+        print("Platform drag order passed (persistence, rollback, restoration, disabled/same-provider identity, selection, no-op and no HTTP).")
     }
 
     @MainActor

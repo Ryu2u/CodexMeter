@@ -22,6 +22,17 @@ nonisolated struct DeepSeekPricingSnapshot: Equatable, Sendable {
         DeepSeekPricingSchedule.remainingWaitFraction(
             at: calculatedAt, phaseStart: currentPhaseStart, target: nextOffPeakAt)
     }
+
+    /// The transition that ends the current phase — off-peak counts down to
+    /// the next peak and peak counts down to the next off-peak — with its
+    /// normalized remaining-wait fraction. Nil while the phase is unknown.
+    var currentPhaseTransition: (phase: DeepSeekPricingPhase, at: Date?, waitFraction: Double?)? {
+        switch phase {
+        case .peak: return (.offPeak, nextOffPeakAt, offPeakWaitFraction)
+        case .offPeak: return (.peak, nextPeakAt, peakWaitFraction)
+        case .unconfirmed: return nil
+        }
+    }
 }
 
 /// Pricing periods are a local calendar calculation, independent of balance requests.

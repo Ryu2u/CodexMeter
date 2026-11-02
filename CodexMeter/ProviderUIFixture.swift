@@ -36,7 +36,8 @@ enum ProviderUIFixture {
             return ProviderUsageCoordinator(
                 credentialStore: credentials, connectionStore: connections,
                 transport: FixtureTransport(extended: usesExtendedScenario),
-                automaticTimers: true
+                automaticTimers: true,
+                claudeCredentialReader: { _ in "sk-ant-oat01-preview-token" }
             )
         }
         #endif
@@ -71,6 +72,9 @@ private final class FixtureConnections: ProviderConnectionStoreProtocol {
                                credentialReference: UUID().uuidString, identityEpoch: UUID(), selectedBucketID: nil),
             ProviderConnection(id: UUID(), kind: .zhipu, region: .china,
                                name: L10n.string("providers.preview_zhipu"), enabled: true,
+                               credentialReference: UUID().uuidString, identityEpoch: UUID(), selectedBucketID: nil),
+            ProviderConnection(id: UUID(), kind: .claude, region: .global,
+                               name: L10n.string("providers.preview_claude"), enabled: true,
                                credentialReference: UUID().uuidString, identityEpoch: UUID(), selectedBucketID: nil)
         ]
         if extended {
@@ -178,6 +182,16 @@ private final class FixtureTransport: ProviderUsageTransport, @unchecked Sendabl
                      "percentage": 16, "nextResetTime": Int64((now + 302400) * 1000)]
                 ]
             ]]
+        case "api.anthropic.com":
+            let stamp = ISO8601DateFormatter()
+            stamp.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            let now = Date()
+            body = [
+                "five_hour": ["utilization": 19.0,
+                              "resets_at": stamp.string(from: now.addingTimeInterval(7_200))],
+                "seven_day": ["utilization": 36.0,
+                              "resets_at": stamp.string(from: now.addingTimeInterval(302_400))]
+            ]
         default:
             throw ProviderUsageFailure(code: .invalidConfiguration)
         }

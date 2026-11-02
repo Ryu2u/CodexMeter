@@ -12,6 +12,8 @@ struct MenuBarProgressView: View {
     let isStale: Bool
     let appearance: MenuBarAppearance
     var flashContext: String? = nil
+    var pricing: DeepSeekPricingSnapshot? = nil
+    var pricingDescription: String? = nil
 
     @State private var previousFlashSample: FlashSample?
     @State private var flashIntensity: CGFloat = 0
@@ -34,7 +36,8 @@ struct MenuBarProgressView: View {
     var body: some View {
         Image(nsImage: statusImage)
             .renderingMode(.original)
-            .accessibilityLabel(accessibilityText)
+            .accessibilityLabel(pricingDescription ?? accessibilityText)
+            .help(pricingDescription ?? "")
             .task(id: flashSample) {
                 let current = flashSample
                 let previous = previousFlashSample
@@ -77,7 +80,31 @@ struct MenuBarProgressView: View {
     }
 
     private var normalizedAppearance: MenuBarAppearance {
-        appearance.normalized()
+        var result = appearance.normalized()
+        if pricing != nil { result.showsCaption = true }
+        return result
+    }
+
+    private var renderedStyle: MenuBarDisplayStyle {
+        pricing == nil ? style : .progressAndPercentage
+    }
+
+    private var balanceTextLayout: MenuBarBalanceTextLayout? {
+        guard pricing != nil else { return nil }
+        let appearance = normalizedAppearance
+        let amountWidth = (title as NSString).size(withAttributes: [
+            .font: NSFont.monospacedDigitSystemFont(
+                ofSize: appearance.percentageFontSize, weight: appearance.percentageFontWeight.nsWeight)
+        ]).width
+        let captionWidth = (appearance.captionText as NSString).size(withAttributes: [
+            .font: NSFont.systemFont(ofSize: appearance.captionFontSize, weight: appearance.captionFontWeight.nsWeight)
+        ]).width
+        return MenuBarBalanceTextLayout(
+            amountWidth: amountWidth, captionWidth: captionWidth, appearance: appearance)
+    }
+
+    private var textColumnWidth: CGFloat {
+        CGFloat(balanceTextLayout?.width ?? normalizedAppearance.textWidth)
     }
 
     private var staleWidth: CGFloat {
@@ -90,11 +117,11 @@ struct MenuBarProgressView: View {
         let padding = CGFloat(appearance.horizontalPadding * 2)
         let spacing = CGFloat(appearance.indicatorTextSpacing)
         let ring = CGFloat(appearance.ringDiameter)
-        let text = CGFloat(appearance.textWidth)
+        let text = textColumnWidth
         let bar = CGFloat(appearance.barWidth)
         let contentWidth: CGFloat
 
-        switch style {
+        switch renderedStyle {
         case .progressAndPercentage:
             contentWidth = ring + spacing + text
         case .horizontalBarBesidePercentage, .dualBars:
@@ -127,7 +154,7 @@ struct MenuBarProgressView: View {
             var cursorX = CGFloat(appearance.horizontalPadding) + leadingStaleWidth
             let centerY = rect.midY
 
-            switch style {
+            switch renderedStyle {
             case .progressAndPercentage:
                 let diameter = CGFloat(appearance.ringDiameter)
                 drawProgressRings(
@@ -144,7 +171,7 @@ struct MenuBarProgressView: View {
                     in: NSRect(
                         x: cursorX,
                         y: 0,
-                        width: CGFloat(appearance.textWidth),
+                        width: textColumnWidth,
                         height: rect.height
                     ),
                     appearance: appearance
@@ -168,7 +195,7 @@ struct MenuBarProgressView: View {
                     in: NSRect(
                         x: cursorX,
                         y: 0,
-                        width: CGFloat(appearance.textWidth),
+                        width: textColumnWidth,
                         height: rect.height
                     ),
                     appearance: appearance
@@ -178,7 +205,7 @@ struct MenuBarProgressView: View {
                 let textRect = NSRect(
                     x: cursorX,
                     y: CGFloat(appearance.barHeight + 2),
-                    width: CGFloat(appearance.textWidth),
+                    width: textColumnWidth,
                     height: rect.height - CGFloat(appearance.barHeight + 2)
                 )
                 renderer.drawSingleLineTitle(in: textRect, appearance: appearance)
@@ -188,7 +215,7 @@ struct MenuBarProgressView: View {
                     in: NSRect(
                         x: cursorX,
                         y: 1,
-                        width: CGFloat(appearance.textWidth),
+                        width: textColumnWidth,
                         height: CGFloat(appearance.barHeight)
                     ),
                     trackOpacity: appearance.trackOpacity
@@ -227,7 +254,7 @@ struct MenuBarProgressView: View {
                     in: NSRect(
                         x: cursorX,
                         y: 0,
-                        width: CGFloat(appearance.textWidth),
+                        width: textColumnWidth,
                         height: rect.height
                     ),
                     appearance: appearance
@@ -238,7 +265,7 @@ struct MenuBarProgressView: View {
                     in: NSRect(
                         x: cursorX,
                         y: 0,
-                        width: CGFloat(appearance.textWidth),
+                        width: textColumnWidth,
                         height: rect.height
                     ),
                     appearance: appearance
@@ -276,6 +303,29 @@ struct MenuBarProgressView: View {
             innerWidth / 2 + 0.5,
             outerRadius - outerWidth / 2 - CGFloat(appearance.ringGap) - innerWidth / 2
         )
+
+        if let pricing {
+            let rings: [(radius: CGFloat, width: CGFloat, fraction: Double?, color: NSColor)] = [
+                (outerRadius, outerWidth, pricing.peakWaitFraction, appearance.normalColor.nsColor),
+                (innerRadius, innerWidth, pricing.offPeakWaitFraction, appearance.timeColor.nsColor)
+            ]
+            for ring in rings {
+                // Each target is independent: an unconfirmed wait never becomes zero
+                // or suppresses the other target's confirmed progress.
+                guard let fraction = ring.fraction else { continue }
+                drawRing(
+                    center: center, radius: ring.radius, lineWidth: ring.width, value: nil,
+                    color: ring.color.withAlphaComponent(CGFloat(appearance.trackOpacity)),
+                    startAngle: appearance.ringStartAngle)
+                drawRing(
+                    center: center, radius: ring.radius, lineWidth: ring.width, value: fraction * 100,
+                    color: ring.color, startAngle: appearance.ringStartAngle)
+            }
+            if pricing.peakWaitFraction == nil || pricing.offPeakWaitFraction == nil {
+                drawUnknown(in: NSRect(x: rect.midX - 4, y: rect.midY - 5, width: 8, height: 10))
+            }
+            return
+        }
 
         drawRing(
             center: center,
@@ -385,6 +435,7 @@ struct MenuBarProgressView: View {
     }
 
     private func drawPercentageAndCaption(in rect: NSRect, appearance: MenuBarAppearance) {
+        let textLayout = balanceTextLayout
         let shouldDrawCaption = appearance.showsCaption && !appearance.captionText.isEmpty
         if shouldDrawCaption {
             drawText(
@@ -396,11 +447,12 @@ struct MenuBarProgressView: View {
                     height: 12
                 ),
                 font: .monospacedDigitSystemFont(
-                    ofSize: appearance.percentageFontSize,
+                    ofSize: textLayout?.fontSize ?? appearance.percentageFontSize,
                     weight: appearance.percentageFontWeight.nsWeight
                 ),
                 color: .labelColor,
-                highlightsChangedDigits: true
+                highlightsChangedDigits: pricing == nil,
+                lineBreakMode: textLayout?.truncatesAmount == true ? .byTruncatingMiddle : .byClipping
             )
             drawText(
                 appearance.captionText,
@@ -414,7 +466,8 @@ struct MenuBarProgressView: View {
                     ofSize: appearance.captionFontSize,
                     weight: appearance.captionFontWeight.nsWeight
                 ),
-                color: appearance.captionColor.nsColor
+                color: appearance.captionColor.nsColor,
+                lineBreakMode: pricing == nil ? .byClipping : .byTruncatingTail
             )
         } else {
             drawSingleLineTitle(in: rect, appearance: appearance)
@@ -442,11 +495,12 @@ struct MenuBarProgressView: View {
 
     private func drawText(
         _ value: String, in rect: NSRect, font: NSFont, color: NSColor,
-        highlightsChangedDigits: Bool = false
+        highlightsChangedDigits: Bool = false,
+        lineBreakMode: NSLineBreakMode = .byClipping
     ) {
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = .center
-        paragraph.lineBreakMode = .byClipping
+        paragraph.lineBreakMode = lineBreakMode
         let text = NSMutableAttributedString(
             string: value,
             attributes: [

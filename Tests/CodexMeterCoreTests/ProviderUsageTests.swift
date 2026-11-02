@@ -60,6 +60,61 @@ final class ProviderUsageTests: XCTestCase {
         XCTAssertTrue(ProviderKind.miniMax.isExperimental)
     }
 
+    func testClaudeDecodesTheLiveWindowObjects() throws {
+        // The live endpoint answers with top-level five_hour/seven_day
+        // objects; `utilization` is the USED share (remaining = 100 - used)
+        // and `resets_at` carries fractional-second RFC 3339 timestamps.
+        let snapshot = try decode("""
+        {"five_hour":{"utilization":1.0,"resets_at":"2026-10-31T13:00:00.072087+00:00"},
+         "seven_day":{"utilization":20.0,"resets_at":"2026-11-01T02:00:00.072109+00:00"}}
+        """, kind: .claude)
+        XCTAssertEqual(snapshot.buckets.map(\.id), ["claude:300", "claude:10080"])
+        XCTAssertEqual(snapshot.buckets.map(\.remainingPercent), [99, 80])
+        XCTAssertEqual(snapshot.buckets.map(\.windowDuration), [18_000, 604_800])
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        XCTAssertEqual(snapshot.buckets[0].resetsAt,
+                       fractional.date(from: "2026-10-31T13:00:00.072087+00:00"))
+        XCTAssertEqual(snapshot.buckets[1].resetsAt,
+                       fractional.date(from: "2026-11-01T02:00:00.072109+00:00"))
+    }
+
+    func testClaudeKeepsTheLegacyArrayShapeAsFallback() throws {
+        let snapshot = try decode("""
+        {"one_day":[{"capacity_type":"five_hour","utilization":81.5}],
+         "seven_day":[{"capacity_type":"seven_day","current_used":"50","limit":"1000"},
+                      {"capacity_type":"seven_day","utilization":1}]}
+        """, kind: .claude)
+        // utilization is used, so 81.5 leaves 18.5; the ratio fallback marks
+        // 5% used (95 remaining) and the duplicate seven_day row is ignored.
+        XCTAssertEqual(snapshot.buckets.map(\.id), ["claude:300", "claude:10080"])
+        XCTAssertEqual(snapshot.buckets.map(\.remainingPercent), [18.5, 95])
+        XCTAssertTrue(snapshot.buckets.allSatisfy { $0.resetsAt == nil })
+    }
+
+    func testClaudeRejectsEmptyOrMalformedPayloads() {
+        for json in ["{}", #"{"five_hour":[]}"#, #"{"five_hour":"nope"}"#,
+                     #"{"five_hour":{"utilization":200}}"#,
+                     #"{"five_hour":{"utilization":true}}"#] {
+            XCTAssertThrowsError(try decode(json, kind: .claude), json)
+        }
+    }
+
+    func testTitleRuleReplacesOnlyTitlesThatRepeatTheWindowDuration() {
+        // Zhipu titles literally repeat the window length in minutes.
+        XCTAssertTrue(ProviderUsageTitleRule.rawTitleRepeatsDuration("300m", windowDuration: 18_000))
+        XCTAssertTrue(ProviderUsageTitleRule.rawTitleRepeatsDuration("10080m", windowDuration: 604_800))
+        // MiniMax titles name the model and must survive beside the duration.
+        XCTAssertFalse(ProviderUsageTitleRule.rawTitleRepeatsDuration("general", windowDuration: 18_000))
+        XCTAssertFalse(ProviderUsageTitleRule.rawTitleRepeatsDuration("MiniMax-M2", windowDuration: 604_800))
+        // A duration-like title that disagrees with the window length stays.
+        XCTAssertFalse(ProviderUsageTitleRule.rawTitleRepeatsDuration("300m", windowDuration: 604_800))
+        // Malformed, negative, or oversized tokens never match.
+        XCTAssertFalse(ProviderUsageTitleRule.rawTitleRepeatsDuration("m", windowDuration: 60))
+        XCTAssertFalse(ProviderUsageTitleRule.rawTitleRepeatsDuration("-5m", windowDuration: 300))
+        XCTAssertFalse(ProviderUsageTitleRule.rawTitleRepeatsDuration("30000000000m", windowDuration: 1))
+    }
+
     func testMiniMaxUnlimitedIsDistinctFromUnavailablePlanSentinel() throws {
         let snapshot = try decode("""
         {"model_remains":[{"model_name":"general","current_interval_remaining_percent":100,

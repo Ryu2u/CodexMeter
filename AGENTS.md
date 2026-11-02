@@ -62,8 +62,14 @@ has changed.
   the scroll viewport into the outer padding; keep content aligned with the header.
 - `MenuBarProgressView.swift` draws the selected ring, bar, percentage, and
   caption style into an original-color `NSImage`. Keep the status-item label
-  free of nested dynamic layout containers. Omit time indicators when reset
-  timing is missing.
+  free of nested dynamic layout containers. Never wrap a menu-bar label in
+  `TimelineView`: on macOS 27 it triggered recursive `NSStatusItem` sizing and
+  unbounded memory growth. Keep the label on the stable single-`Image` path;
+  local minute refresh uses one lifecycle-cancelled task with a stable connection
+  identity, a bounded positive sleep until the next minute, and only an `@State`
+  date update outside body/drawing evaluation. `TimelineView` remains suitable
+  for popover content. Put pricing accessibility text and help on the actual
+  `Image`, not an outer wrapper. Omit time indicators when reset timing is missing.
   When fresh quota decreases within the same account and selected window, hold
   only changed percentage digits red for 0.5 seconds, then fade back over 2 seconds.
   Reset the comparison on context,
@@ -93,12 +99,24 @@ has changed.
   still require a new sign-in. The service stays disabled under the Debug
   provider fixture. In normal mode, `start()` runs unconditionally at launch;
   selecting a menu-bar source does not disable Codex quota.
+- The Codex subscription expiry is a manual, display-only field: the user
+  enters the plan renewal date from the ChatGPT billing page in Settings >
+  Platforms & Connections > Codex, and the popover shows it beside the Codex quota as a localized
+  date plus a day countdown (today and past dates localize distinctly, and
+  a past date uses the stale warning color). An explicit Set expiry date action
+  reveals a draft picker that persists nothing until its explicit save action;
+  dates persist locally only after being set, and clearing
+  hides the popover row. Nothing fetches it, and `Core/CodexSubscriptionExpiry.swift`
+  owns the tested calendar-day math.
 - `Core/CodexOAuthClient.swift` contains the pure device-code OAuth protocol and
   `wham/usage` decoding: a no-redirect ephemeral transport, 20-second timeout,
   and a 512-KiB response cap. These endpoints are experimental and undocumented;
   decode defensively and never expose raw responses or tokens.
 - Optional external connections use ProviderUsageCoordinator with independent
   five-minute polling, cancellation, bounded retries, and identity epochs.
+  The stored menu-bar source selection survives relaunches: the coordinator
+  restores it through the published wrapped value so the persistence observer
+  in `didSet` cannot rewrite the stored selection with nil during launch.
   Existing popover-open handling already refreshes enabled connections; do not
   add a duplicate open-triggered fan-out. A manual refresh covers Codex and all
   enabled external connections, with each service retaining its in-flight
@@ -124,26 +142,115 @@ has changed.
   retain fixture, stale, and error indicators and document its experimental API.
   Preserve boost-adjusted base percentages while normalizing progress
   and pace to current plan capacity. Do not infer token usage from quota.
+- Claude is experimental and reads the subscription's five-hour and seven-day
+  windows from the undocumented `api.anthropic.com/api/oauth/usage` endpoint.
+  The live payload answers with top-level `five_hour`/`seven_day` objects whose
+  `utilization` is the USED percentage (verified against a live response; an
+  inactive session at utilization 1 with severity normal right after a minimal
+  CLI call) and whose `resets_at` fractional-second RFC 3339 string becomes the
+  bucket reset time; remaining = 100 - utilization, and the legacy
+  one_day/seven_day array shape from community clients stays as a defensive
+  fallback. A server-side expired-token 401 surfaces as the Claude-specific
+  token-expired hint (open Claude Code once, then manual refresh) because the
+  stored credential's own expiresAt can be stale. Requests must present Claude Code's own client identity
+  (claude-cli user-agent, `anthropic-beta: oauth-2025-04-20`, `x-app: cli`)
+  because Anthropic disables OAuth tokens used by identifiable third-party
+  clients; that fingerprinting may break at any time.
+- Claude connections carry no stored secret: every refresh borrows the
+  on-device Claude Code OAuth token through `ClaudeCodeCredentialStore`
+  (the macOS Keychain item "Claude Code-credentials", with
+  `~/.claude/.credentials.json` as the fallback; `Core/ClaudeCodeCredentials.swift`
+  owns the tested parser). The token is used in memory only and never copied
+  into CodexMeter's own storage. The first read needs the user's Keychain
+  consent, so it happens through a manual refresh exactly like the app's own
+  credential store; a missing or denied token surfaces as
+  `localCredentialMissing`, which pauses automatic polling until a manual
+  refresh. `saveConnection` accepts an empty key only for Claude.
+  The status wording is chosen by `ProviderConnectionStatus.failureMessageKey(for:)`
+  in Core, and `ProviderUsagePresentation.status` requires the connection kind,
+  so every view (overview section, detail page) shows the Claude token-expired
+  hint instead of the key-based "invalid key / check region" message.
 - ProviderCredentialStore owns only app-created API-key items in its Keychain
   namespace. ProviderConnectionStore persists metadata and a bounded crash-safe
   retiring-key journal. Automatic Keychain reads disallow interaction.
   HTTP queries use an ephemeral session, official HTTPS origins only, no
   authenticated cross-origin redirects, a 20-second timeout, and a 512-KiB body
   limit. Never include secrets or raw server messages in diagnostics.
-- `PopoverOverviewSource.visibleSources(from:developerPreviewEnabled:)` builds the
-  compact popover overview: Codex first, then enabled external connections in
-  store order, keeping same-provider connections distinct by UUID. Disabled
+- The app is a provider shell: Codex is a removable source like any other
+  platform. Enrollment persists at `providers.v1.codexEnrolled`
+  (ProviderConnectionStore; an absent key means enrolled), published by the
+  coordinator as `codexEnrolled` with `setCodexEnrolled(_:)`. The Codex
+  connection row offers removal only while disconnected with no pending device
+  code, so removal never deletes credentials by itself — disconnect stays the
+  credential-deleting action — and Platforms & Connections offers an Add Codex
+  action to re-enroll. While removed, the popover overview and the ordering
+  candidates (`orderingCandidates`) omit Codex, the menu-bar source picker's
+  nil entry becomes the localized None entry, and a popover empty state with
+  an Add action shows when no source is enrolled at all. The
+  OAuth service itself keeps running (idle without a credential); removal is
+  presentation-level only.
+- Every source row in Platforms & Connections — Codex included — carries a
+  popover-visibility switch. Connections back theirs with
+  `ProviderConnection.showsInOverview` (nil means shown, so pre-shell stored
+  metadata decodes as visible); hidden connections keep polling in the
+  background and stay listed in Settings, the popover overview omits them via
+  `isShownInOverview`, and `setShowsInOverview(_:for:)` persists the change
+  without touching identity, snapshots, or credentials. Codex backs its switch
+  with `providers.v1.codexShowsInOverview` (absent means shown) and
+  `setCodexShowsInOverview(_:)`; the coordinator exposes the combined
+  `codexVisibleInOverview` (`codexEnrolled && codexShowsInOverview`). Removal
+  remains the stronger Codex action that drops the settings row itself.
+- `PopoverOverviewSource.visibleSources(from:developerPreviewEnabled:codexVisible:)`
+  builds the compact popover overview: Codex is an ordinary source — listed
+  only while visible — followed by enabled external
+  connections in store order, keeping same-provider connections distinct by
+  UUID. Disabled
   connections are omitted; enabled sources remain listed when authentication is
   required or a request fails. The overview summarizes all visible Codex windows
   and all provider snapshot buckets, never just the selected menu-bar bucket.
   Each platform gets a divider-separated section whose collapsed summary is a
   row of small rings with the remaining percentage centered and the window name
-  below each ring; buckets without a percentage (currency amounts, unavailable
-  or unlimited values) render as text rows without rings. Rows are collapsed by
-  default and the expansion set is view-local state, never persisted; the
-  expanded detail shows quota and remaining-time rings plus the existing text
-  details, and DeepSeek pricing periods appear only inside its expanded
-  connection.
+  below each ring; every percentage window contributes both its quota ring and
+  its reset-time ring (Codex and external providers alike), so the collapsed
+  summary never hides rings the expanded detail has. Ring labels follow the
+  shared `WindowRingLabels` rule: the quota ring shows the window title
+  verbatim and the reset ring appends the reset wording to that same title,
+  so multi-window platforms never render indistinguishable rings. Buckets without a
+  percentage (currency amounts, unavailable or unlimited values) render as text
+  rows without rings, and a collapsed DeepSeek connection also shows its current
+  Beijing-time pricing phase (shared `DeepSeekPricingPhase` title/symbol/color)
+  so the state stays readable without expanding. Rows are collapsed by default and the expansion set is
+  view-local state, never persisted; the expanded detail renders every Codex
+  window and provider percentage bucket through the shared `QuotaWindowDetail`
+  component (semibold title with the rounded percentage, optional boost note,
+  large quota and remaining-time rings, pace and reset lines) so the two
+  platforms cannot diverge; `ProviderUsagePresentation.title` replaces the raw
+  title only when it literally repeats the window length (Zhipu's "300m") and
+  otherwise keeps it beside the localized duration ("general · 5-hour quota")
+  so multi-model MiniMax accounts stay distinguishable
+  (`Core/ProviderUsageModels.swift` owns the tested rule), and
+  DeepSeek pricing periods appear only inside its expanded connection. Ring rows lay out through
+  `Core/EvenFlowDistribution.swift` (unit-tested) wrapped in a SwiftUI
+  `Layout`: gauges never compress, they wrap onto extra lines when the row
+  overflows, and lines and items distribute evenly (equal gaps, including row
+  edges) horizontally and vertically. Wrapped lines never sit closer than the
+  minimum line gap; a single-line row keeps its natural height without
+  vertical edge padding. Items top-align within their line so
+  every gauge sits at the same height even when labels wrap differently.
+- The platform list and popover share user-customizable source order:
+  `providers.v1.overviewOrder` in the connection store keeps stable order tokens
+  (`PopoverOverviewSource.orderToken`: `"codex"` or the connection UUID).
+  Platforms & Connections renders `orderedOverviewSources`, including disabled
+  connections, and offers a dedicated drag handle per row. Only a payload
+  matching the live local drag nonce commits on drop; hovering and canceled
+  drags never persist. Top/bottom insertion lines show the destination. Keyboard Up/Down,
+  accessibility actions, and the handle's context menu use the same coordinator
+  move path. Save before publishing; a failed write retains the previous order.
+  Do not duplicate ordering controls in Menu Bar & Popover. `ContentView` applies
+  `ordered(_:by:)` after `visibleSources`. Unlisted/unknown tokens append or are
+  ignored, preserving new/deleted connection behavior and the default Codex-first
+  order when absent. Reordering never changes menu-bar source selection or the
+  overview's expanded/collapsed state.
   Keep each source's localized loading/error/stale status and update time
   independent, even while collapsed, retain its last snapshot on failure, and
   do not add a selected-source global timestamp. Preserve amount/count/unlimited/
@@ -153,8 +260,11 @@ has changed.
   menu-bar source selector. The selector hides its visual label while retaining
   its localized accessible name and changes only `providers.selectedConnectionID`;
   it must not filter or reorder overview rows or clear their expansion state.
-  The built-in source displays as Codex without a sign-in-method qualifier.
-  Monetary balances use text rather than quota rings. Keep Codex sign-in and
+  The built-in source displays as Codex without a sign-in-method qualifier;
+  while the Codex source is removed, the picker's nil entry becomes the
+  localized None entry.
+  Monetary balances remain text rather than quota percentages; DeepSeek adds
+  time-only pricing rings beside its amount. Keep Codex sign-in and
   pending-device-code controls reachable from the overview.
 - `Core/DeepSeekPricingSchedule.swift` calculates local Beijing-time pricing
   periods independently of balance HTTP. Weekday peak intervals are [09:00,
@@ -163,9 +273,30 @@ has changed.
   adjusted weekday breaks and uncovered years stay unconfirmed during candidate
   peak hours. Do not skip unknown boundaries when calculating next-period waits
   or the continuous current-period start. `DeepSeekPricingPeriodsView` shows
-  time-only wait bars once per DeepSeek connection and recalculates at minute
-  boundaries without requesting balance data. Both bars normalize the remaining
-  wait from the current continuous period start to their own next phase start.
+  one time-only wait bar per DeepSeek connection — the wait that ends the
+  current phase (peak waits for off-peak, off-peak waits for peak) — and
+  recalculates at minute boundaries without requesting balance data. The bar
+  normalizes the remaining wait from the current continuous period start to
+  that phase end; the menu-bar rings keep showing both targets.
+  The DeepSeek menu-bar source always uses concentric time rings (outer: next
+  peak, inner: next off-peak), a symbol-only currency amount above a lowercase
+  `deepseek` caption, independently of percentage-source style/caption settings.
+  `Core/DeepSeekMenuBarBalanceFormatter.swift` uses `¥` for CNY and `$` for USD
+  without region/code prefixes, preserving localized grouping and 2...8 decimal
+  places; popover currency formatting remains unchanged. Reuse the normal
+  outer and time inner appearance colors and ring geometry; each arc shrinks as
+  its target approaches. Keep unknown rings absent with a question mark, without
+  suppressing any independently known ring or inventing zero/full progress.
+  Missing balance never suppresses local time rings. Both the menu bar and
+  popover recalculate at minute boundaries without balance HTTP. Tooltips and
+  accessibility retain the full balance, phase, ring identities, countdowns,
+  target times, and stale state; Debug fixtures retain a visible Preview caption.
+  `Core/MenuBarBalanceTextLayout.swift` measures the amount/caption column up to
+  160 points and requests explicit ellipsis beyond that; never silently clip
+  money or discard its formatted precision. The amount keeps the exact shared
+  percentage font size/family/weight/offset/line height and the `deepseek`
+  caption the ordinary shared caption typography exactly as every other
+  source — no DeepSeek-specific font scaling anywhere.
 - Debug-only --provider-ui-fixture uses fake in-memory credentials and a
   controlled transport only; it performs no real OAuth, Keychain access, or
   HTTP and visibly labels all sample data, including collapsed rows. The OAuth
@@ -203,13 +334,18 @@ has changed.
   `PopoverCustomizationView.swift` presents these Codex-only controls and a
   clearly scoped Codex layout preview in the Menu Bar & Popover category.
   Keep shared menu bar styles separate; they apply to percentage quota sources.
-- `AppSettingsView.swift` owns one resizable settings window with General,
-  Platforms & Connections, Menu Bar & Popover, Developer, and About categories.
-  The menu bar Settings row opens this window directly; do not expand settings
-  inline. The General category hosts the Codex account row: sign-in, the
-  pending device code with copy/open/cancel, and the connected state with an
-  explicit disconnect. About is the final sidebar category and embeds
-  About content in the settings detail pane.
+- `AppSettingsView.swift` owns one resizable settings window whose sidebar
+  leads with Platforms & Connections (the most-used category and the default
+  landing page), followed by General, Menu Bar & Popover, Developer, and
+  About. The menu bar Settings row opens this window directly; do not expand
+  settings inline. General contains only language, appearance, and
+  launch-at-login controls.
+  Platforms & Connections lists Codex and the other platform connections as
+  sibling rows in one Connections section. The Codex row owns sign-in, the
+  selectable pending device code with open/cancel, explicit disconnect, refresh,
+  and the manual subscription-expiry editor. Do not label other platforms as
+  external connections or separate Codex account management into General.
+  About is the final sidebar category and embeds About content in the detail pane.
 - `AppSettings.swift` persists in-app language, app appearance, menu bar,
   popover content, launch-at-login, and separately namespaced developer
   preferences. App appearance defaults to following the system and may be
@@ -232,7 +368,10 @@ memory alone, and offers an explicit disconnect. Quota is display-only:
 CodexMeter keeps no local usage database and has no history, notification,
 backup, CSV, or export chain. User-entered external platform API keys are a
 separate, explicitly configured source and may be saved only in the app-owned
-Keychain.
+Keychain. The deliberate exception is the Claude connection: it reads the
+locally stored Claude Code OAuth token on demand with the user's Keychain
+consent, keeps it in memory only, and never persists it; no other application
+data is ever read.
 
 ## Quota display rules
 
@@ -252,8 +391,9 @@ Keychain.
   below 20% is critical/red; otherwise above ideal pace is warning/yellow;
   otherwise use the normal system/accent color. Apply the same rule to the
   detail quota bar.
-- In the menu bar, the outer ring represents remaining quota and follows the
-  quota state color. The inner ring represents remaining time in blue. Do not
+- For percentage quota sources in the menu bar, the outer ring represents
+  remaining quota and follows the quota state color. The inner ring represents
+  remaining time in blue. Do not
   draw the inner ring when the source does not provide enough reset timing data.
 - Resolve dynamic AppKit colors against SwiftUI's current color scheme before
   passing them to native progress controls. Also key each metric

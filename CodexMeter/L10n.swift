@@ -24,6 +24,14 @@ enum L10n {
         return formatter.string(from: date)
     }
 
+    static func formattedDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = locale
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter.string(from: date)
+    }
+
     static func formattedTime(_ date: Date, includingSeconds: Bool = false) -> String {
         let formatter = DateFormatter()
         formatter.locale = locale

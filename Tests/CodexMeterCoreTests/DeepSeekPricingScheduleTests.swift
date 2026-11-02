@@ -33,6 +33,22 @@ final class DeepSeekPricingScheduleTests: XCTestCase {
         XCTAssertEqual(value.offPeakWaitFraction ?? -1, 2.0 / 3, accuracy: 0.000001)
     }
 
+    func testCurrentPhaseTransitionWaitsForWhateverEndsTheCurrentPhase() {
+        // A morning peak counts down to the noon off-peak...
+        let peak = snapshot("2026-10-14T10:00:00")
+        XCTAssertEqual(peak.currentPhaseTransition?.phase, .offPeak)
+        XCTAssertEqual(peak.currentPhaseTransition?.at, date("2026-10-14T12:00:00+08:00"))
+        XCTAssertEqual(peak.currentPhaseTransition?.waitFraction ?? -1, 2.0 / 3, accuracy: 0.000001)
+        // ...a night valley waits for the next morning's peak...
+        let valley = snapshot("2026-10-14T20:00:00")
+        XCTAssertEqual(valley.currentPhaseTransition?.phase, .peak)
+        XCTAssertEqual(valley.currentPhaseTransition?.at, date("2026-10-15T09:00:00+08:00"))
+        XCTAssertEqual(valley.currentPhaseTransition?.waitFraction ?? -1, 13.0 / 15, accuracy: 0.000001)
+        // ...and an unconfirmed phase has no meaningful countdown target
+        // (Oct 5 is a makeup workday inside the National Day break).
+        XCTAssertNil(snapshot("2026-10-05T10:00:00").currentPhaseTransition)
+    }
+
     func testLunchValleyUsesSameContinuousPhaseStartForBothWaits() {
         let value = snapshot("2026-10-14T13:00:00")
         XCTAssertEqual(value.currentPhaseStart, date("2026-10-14T12:00:00+08:00"))

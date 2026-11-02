@@ -113,6 +113,72 @@ struct QuotaRing: View {
     }
 }
 
+/// One expanded quota window shared by Codex and external providers: a
+/// semibold title with the rounded percentage on the right, the optional
+/// boost note, large quota and remaining-time rings, then the pace and reset
+/// lines. Both platforms must render identically, so keep every layout
+/// choice here instead of at the call sites.
+struct QuotaWindowDetail: View {
+    let title: String
+    let percentText: String
+    var boostText: String? = nil
+    let quota: Double?
+    let quotaTint: Color
+    let time: Double?
+    let timeTint: Color
+    let paceText: String?
+    var paceHelp: String? = nil
+    let resetText: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                Text(percentText)
+                    .font(.headline.monospacedDigit())
+            }
+            if let boostText {
+                Text(boostText)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            OverviewRingRow {
+                if let quota {
+                    OverviewRingItem(
+                        label: L10n.string("quota.remaining"),
+                        value: quota,
+                        tint: quotaTint,
+                        diameter: 44
+                    )
+                }
+                if let time {
+                    OverviewRingItem(
+                        label: L10n.string("providers.remaining_time"),
+                        value: time,
+                        tint: timeTint,
+                        diameter: 44
+                    )
+                }
+            }
+            if let paceText {
+                Text(paceText)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .help(paceHelp ?? paceText)
+            }
+            if let resetText {
+                Text(resetText)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
 /// A ring with its label wrapped underneath instead of stretching the row.
 struct OverviewRingItem: View {
     let label: String
@@ -134,7 +200,21 @@ struct OverviewRingItem: View {
     }
 }
 
-/// Ring rows opt out of horizontal fitting so gauges never compress.
+/// Shared label rule for the collapsed summary rings of one percentage
+/// window, on Codex and external providers alike: the quota ring shows the
+/// window title verbatim, and the reset ring appends the reset wording to
+/// that same title, so a platform with several windows never renders two
+/// indistinguishable rings. The expanded `QuotaWindowDetail` keeps its
+/// generic ring labels because each card already shows the title above them.
+enum WindowRingLabels {
+    static func quota(_ title: String) -> String { title }
+    static func reset(_ title: String) -> String {
+        L10n.format("quota.window_reset_format", title)
+    }
+}
+
+/// Ring rows spread their gauges evenly across the full row width and wrap
+/// onto extra lines instead of compressing; gauges always keep ideal size.
 struct OverviewRingRow<Content: View>: View {
     private let content: Content
 
@@ -143,8 +223,42 @@ struct OverviewRingRow<Content: View>: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) { content }
-            .fixedSize(horizontal: true, vertical: false)
+        EvenFlowLayout(minimumLineGap: 10) { content }
+            .frame(maxWidth: .infinity)
+    }
+}
+
+/// SwiftUI adapter for the unit-tested EvenFlowDistribution math: rings keep
+/// their ideal size and only their positions come from the distribution.
+private struct EvenFlowLayout: Layout {
+    var minimumLineGap: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        return EvenFlowDistribution.resolve(
+            sizes: sizes,
+            proposedWidth: proposal.width,
+            proposedHeight: proposal.height,
+            minimumLineGap: minimumLineGap
+        ).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        let result = EvenFlowDistribution.resolve(
+            sizes: sizes,
+            proposedWidth: bounds.width,
+            proposedHeight: bounds.height,
+            minimumLineGap: minimumLineGap
+        )
+        for (index, subview) in subviews.enumerated() {
+            let placement = result.placements[index]
+            subview.place(
+                at: CGPoint(x: bounds.minX + placement.x, y: bounds.minY + placement.y),
+                anchor: .topLeading,
+                proposal: .unspecified
+            )
+        }
     }
 }
 
@@ -189,14 +303,15 @@ struct ProviderOverviewSection: View {
                 if status?.isLoading == true {
                     HStack(spacing: 6) {
                         ProgressView().controlSize(.small)
-                        Text(ProviderUsagePresentation.status(status))
+                        Text(ProviderUsagePresentation.status(status, kind: connection.kind))
                     }
                     .foregroundStyle(.secondary)
                 } else if status?.errorCode != nil {
-                    Label(ProviderUsagePresentation.status(status), systemImage: "exclamationmark.triangle")
+                    Label(ProviderUsagePresentation.status(status, kind: connection.kind),
+                          systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.orange)
                 } else {
-                    Text(ProviderUsagePresentation.status(status))
+                    Text(ProviderUsagePresentation.status(status, kind: connection.kind))
                         .foregroundStyle(.secondary)
                 }
                 if status?.isStale == true, snapshot != nil {
@@ -212,14 +327,42 @@ struct ProviderOverviewSection: View {
         } summary: {
             if snapshot != nil {
                 VStack(alignment: .leading, spacing: 7) {
+                    if connection.kind == .deepSeek {
+                        // Balance rows render as text without rings, so keep
+                        // the current Beijing-time pricing phase visible in
+                        // the collapsed state too; it is a local calendar
+                        // calculation and never an extra request.
+                        TimelineView(.periodic(from: Date(), by: 60)) { context in
+                            let phase = DeepSeekPricingSchedule.snapshot(at: context.date).phase
+                            Label(phase.localizedTitle, systemImage: phase.symbolName)
+                                .font(.caption)
+                                .foregroundStyle(phase.phaseColor(
+                                    for: settings.developerAppearance, colorScheme: colorScheme))
+                        }
+                    }
                     if !ringBuckets.isEmpty {
-                        OverviewRingRow {
-                            ForEach(ringBuckets) { bucket in
-                                OverviewRingItem(
-                                    label: ProviderUsagePresentation.title(bucket),
-                                    value: bucket.remainingPercent,
-                                    tint: quotaTint(bucket)
-                                )
+                        // Like the Codex summary, every percentage window shows
+                        // both its quota ring and its reset-time ring, labeled
+                        // by the shared rule so multi-window platforms stay
+                        // distinguishable without expanding.
+                        TimelineView(.periodic(from: Date(), by: 60)) { context in
+                            OverviewRingRow {
+                                ForEach(ringBuckets) { bucket in
+                                    OverviewRingItem(
+                                        label: WindowRingLabels.quota(
+                                            ProviderUsagePresentation.title(bucket)),
+                                        value: bucket.remainingPercent,
+                                        tint: quotaTint(bucket, at: context.date)
+                                    )
+                                    if let time = bucket.remainingTimePercent(at: context.date) {
+                                        OverviewRingItem(
+                                            label: WindowRingLabels.reset(
+                                                ProviderUsagePresentation.title(bucket)),
+                                            value: time,
+                                            tint: settings.developerAppearance.timeColor.swiftUIColor(for: colorScheme)
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -252,7 +395,7 @@ struct ProviderOverviewSection: View {
         }
     }
 
-    private func quotaTint(_ bucket: ProviderUsageBucket) -> Color {
+    private func quotaTint(_ bucket: ProviderUsageBucket, at date: Date) -> Color {
         switch ProviderUsagePresentation.attention(bucket, at: date) {
         case .normal: settings.developerAppearance.normalColor.swiftUIColor(for: colorScheme)
         case .warning: settings.developerAppearance.warningColor.swiftUIColor(for: colorScheme)

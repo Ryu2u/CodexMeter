@@ -28,6 +28,7 @@ struct ContentView: View {
     @ObservedObject var providers: ProviderUsageCoordinator
     @ObservedObject var oauth: CodexOAuthUsageService
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.openWindow) private var openWindow
     @State private var maximumPopoverHeight = PopoverLayoutMetrics.initialMaximumHeight
     @State private var expandedSources: Set<PopoverOverviewSource.ID> = []
 
@@ -98,9 +99,13 @@ struct ContentView: View {
     }
 
     private var overviewSources: [PopoverOverviewSource] {
-        PopoverOverviewSource.visibleSources(
-            from: providers.connections,
-            developerPreviewEnabled: settings.developerPreviewEnabled
+        PopoverOverviewSource.ordered(
+            PopoverOverviewSource.visibleSources(
+                from: providers.connections,
+                developerPreviewEnabled: settings.developerPreviewEnabled,
+                codexVisible: providers.codexVisibleInOverview
+            ),
+            by: providers.overviewOrder
         )
     }
 
@@ -110,29 +115,56 @@ struct ContentView: View {
                 previewModeBanner
             }
 
-            ForEach(overviewSources) { source in
-                Divider()
-                switch source {
-                case .codex:
-                    if settings.developerPreviewEnabled {
-                        DeveloperQuotaOverviewSection(
+            if overviewSources.isEmpty {
+                emptyOverview
+            } else {
+                ForEach(overviewSources) { source in
+                    Divider()
+                    switch source {
+                    case .codex:
+                        if settings.developerPreviewEnabled {
+                            DeveloperQuotaOverviewSection(
+                                settings: settings,
+                                isExpanded: expansion(for: source.id)
+                            )
+                        } else {
+                            codexOverview
+                        }
+                    case .provider(let connection):
+                        ProviderOverviewSection(
+                            connection: connection,
+                            providers: providers,
                             settings: settings,
                             isExpanded: expansion(for: source.id)
                         )
-                    } else {
-                        codexOverview
                     }
-                case .provider(let connection):
-                    ProviderOverviewSection(
-                        connection: connection,
-                        providers: providers,
-                        settings: settings,
-                        isExpanded: expansion(for: source.id)
-                    )
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The shell with no enrolled sources still needs one clear way forward.
+    private var emptyOverview: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "square.grid.2x2")
+                .font(.title2)
+                .foregroundStyle(.secondary)
+            Text(L10n.string("overview.empty_title"))
+                .font(.subheadline.weight(.semibold))
+            Text(L10n.string("overview.empty_hint"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            Button(L10n.string("overview.empty_action")) {
+                openWindow(id: CodexMeterWindowID.settings)
+                NSApplication.shared.activate(ignoringOtherApps: true)
+            }
+            .buttonStyle(.link)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 24)
     }
 
     private func expansion(for id: PopoverOverviewSource.ID) -> Binding<Bool> {
@@ -185,7 +217,13 @@ struct ContentView: View {
             }
             if showsSourcePicker {
                 Picker(L10n.string("providers.menu_bar_source"), selection: sourceSelection) {
-                    Text(L10n.string("oauth.source_title")).tag(nil as String?)
+                    // With Codex removed the nil entry is an explicit "none"
+                    // instead of the built-in Codex source.
+                    if providers.codexEnrolled {
+                        Text(L10n.string("oauth.source_title")).tag(nil as String?)
+                    } else {
+                        Text(L10n.string("providers.menu_bar_none")).tag(nil as String?)
+                    }
                     ForEach(providers.connections) { connection in
                         Text(connection.name).tag(Optional(connection.id.uuidString))
                     }
@@ -259,17 +297,27 @@ struct ContentView: View {
             if !oauth.windows.isEmpty && visibleOAuthWindows.isEmpty {
                 hiddenWindowsMessage
             } else {
-                OverviewRingRow {
-                    ForEach(visibleOAuthWindows) { window in
-                        OverviewRingItem(
-                            label: window.name,
-                            value: Double(window.remainingPercent),
-                            tint: quotaAttentionTint(
-                                window.attentionLevel(at: Date()),
-                                appearance: settings.developerAppearance,
-                                colorScheme: colorScheme
+                // The collapsed summary keeps every ring the expanded view
+                // has (quota plus reset time per window) so nothing needs
+                // expanding just to read the gauges; countdowns stay fresh.
+                TimelineView(.periodic(from: Date(), by: 60)) { context in
+                    OverviewRingRow {
+                        ForEach(visibleOAuthWindows) { window in
+                            WindowRingItem(
+                                label: WindowRingLabels.quota(window.name),
+                                value: Double(window.remainingPercent),
+                                tint: quotaAttentionTint(
+                                    window.attentionLevel(at: context.date),
+                                    appearance: settings.developerAppearance,
+                                    colorScheme: colorScheme
+                                )
                             )
-                        )
+                            WindowRingItem(
+                                label: WindowRingLabels.reset(window.name),
+                                value: window.remainingTimePercent(at: context.date),
+                                tint: settings.developerAppearance.timeColor.swiftUIColor(for: colorScheme)
+                            )
+                        }
                     }
                 }
             }
@@ -287,6 +335,9 @@ struct ContentView: View {
                 if let planType = oauth.planType {
                     Text(L10n.format("account.chatgpt_format", planType.capitalized))
                         .foregroundStyle(.secondary)
+                }
+                if let expiration = settings.codexSubscriptionExpiration {
+                    codexExpirationRow(expiration)
                 }
                 if oauth.deviceCode != nil {
                     Label(L10n.string("oauth.login_pending"), systemImage: "globe")
@@ -328,6 +379,31 @@ struct ContentView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func codexExpirationRow(_ expiration: Date) -> some View {
+        // Keep the countdown fresh without reopening the popover.
+        TimelineView(.periodic(from: Date(), by: 60)) { context in
+            Text(codexExpirationSummary(expiration, now: context.date))
+                .foregroundStyle(
+                    CodexSubscriptionExpiry.daysRemaining(until: expiration, now: context.date) < 0
+                        ? Color.orange
+                        : Color.secondary
+                )
+        }
+        .font(.caption)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func codexExpirationSummary(_ expiration: Date, now: Date) -> String {
+        let days = CodexSubscriptionExpiry.daysRemaining(until: expiration, now: now)
+        let countdown: String
+        switch days {
+        case ..<0: countdown = L10n.string("oauth.expiration_expired")
+        case 0: countdown = L10n.string("oauth.expiration_today")
+        default: countdown = L10n.format("oauth.expiration_days_remaining_format", days)
+        }
+        return L10n.format("oauth.expiration_summary_format", L10n.formattedDate(expiration), countdown)
     }
 
     @ViewBuilder
@@ -517,8 +593,8 @@ private struct SettingsSection: View {
     }
 }
 
-/// Narrow ring item for the merged all-windows row; tighter than OverviewRingItem
-/// so six rings still fit the 380 pt popover without compression.
+/// Narrow ring item for the collapsed summary; the even-flow row wraps these
+/// onto extra lines instead of compressing them when the popover is full.
 private struct WindowRingItem: View {
     let label: String
     let value: Double?
@@ -538,7 +614,8 @@ private struct WindowRingItem: View {
     }
 }
 
-/// Every visible window shares one ring row; each window keeps one compact info line.
+/// Every visible window reuses the shared expanded-window component so Codex
+/// and external providers render per-window groups identically.
 private struct UsageWindowsDetail: View {
     let windows: [CodexUsageWindow]
     let now: Date
@@ -547,81 +624,44 @@ private struct UsageWindowsDetail: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            OverviewRingRow {
-                ForEach(windows) { window in
-                    WindowRingItem(
-                        label: L10n.format("quota.window_quota_format", window.name),
-                        value: Double(window.remainingPercent),
-                        tint: quotaAttentionTint(
-                            window.attentionLevel(at: now),
-                            appearance: appearance,
-                            colorScheme: colorScheme
-                        )
-                    )
-                    WindowRingItem(
-                        label: L10n.format("quota.window_reset_format", window.name),
-                        value: window.remainingTimePercent(at: now),
-                        tint: appearance.timeColor.swiftUIColor(for: colorScheme)
-                    )
-                }
-            }
-
-            ForEach(windows) { window in
-                windowInfoRow(window)
+            ForEach(Array(windows.enumerated()), id: \.element.id) { index, window in
+                if index > 0 { Divider() }
+                QuotaWindowDetail(
+                    title: window.name,
+                    percentText: "\(window.remainingPercent)%",
+                    quota: Double(window.remainingPercent),
+                    quotaTint: quotaAttentionTint(
+                        window.attentionLevel(at: now),
+                        appearance: appearance,
+                        colorScheme: colorScheme
+                    ),
+                    time: window.remainingTimePercent(at: now),
+                    timeTint: appearance.timeColor.swiftUIColor(for: colorScheme),
+                    paceText: paceText(for: window),
+                    paceHelp: paceHelpText(for: window),
+                    resetText: resetText(for: window)
+                )
             }
         }
         .padding(.vertical, 4)
     }
 
-    private func windowInfoRow(_ window: CodexUsageWindow) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(window.name)
-                .fontWeight(.semibold)
-
-            Spacer(minLength: 8)
-
-            paceLabel(for: window)
-            resetCountdown(for: window)
-
-            if let resetsAt = window.resetsAt {
-                Text(L10n.format("quota.reset_format", L10n.formattedDateTime(resetsAt)))
-            }
-        }
-        .font(.caption)
-        .foregroundStyle(.secondary)
-    }
-
-    @ViewBuilder
-    private func resetCountdown(for window: CodexUsageWindow) -> some View {
-        if let resetsAt = window.resetsAt {
-            Label(
-                L10n.format(
-                    "quota.reset_remaining_format",
-                    L10n.remainingDuration(until: resetsAt, from: now)
-                ),
-                systemImage: "hourglass"
-            )
-        } else {
-            Label(L10n.string("quota.reset_unavailable"), systemImage: "hourglass")
-        }
-    }
-
-    @ViewBuilder
-    private func paceLabel(for window: CodexUsageWindow) -> some View {
+    private func paceText(for window: CodexUsageWindow) -> String {
         switch window.pace(at: now) {
-        case .onTrack:
-            Label(L10n.string("pace.on_track"), systemImage: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-                .help(paceHelpText(for: window))
-        case .overPace:
-            Label(L10n.string("pace.over"), systemImage: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
-                .help(paceHelpText(for: window))
-        case .unavailable:
-            Label(L10n.string("pace.unavailable"), systemImage: "questionmark.circle")
-                .foregroundStyle(.secondary)
-                .help(L10n.string("pace.unavailable_help"))
+        case .onTrack: L10n.string("pace.on_track")
+        case .overPace: L10n.string("pace.over")
+        case .unavailable: L10n.string("pace.unavailable")
         }
+    }
+
+    private func resetText(for window: CodexUsageWindow) -> String {
+        if let resetsAt = window.resetsAt {
+            return L10n.format(
+                "quota.reset_remaining_format",
+                L10n.remainingDuration(until: resetsAt, from: now)
+            )
+        }
+        return L10n.string("quota.reset_unavailable")
     }
 
     private func paceHelpText(for window: CodexUsageWindow) -> String {
