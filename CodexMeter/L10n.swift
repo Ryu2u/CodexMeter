@@ -40,6 +40,12 @@ enum L10n {
         return formatter.string(from: date)
     }
 
+    /// Appends the reset instant, always in Beijing time, to a "resets in …" line.
+    static func withBeijingResetClock(_ text: String, resetsAt: Date, now: Date) -> String {
+        let clock = BeijingResetClock.text(for: resetsAt, relativeTo: now, locale: locale)
+        return format("quota.reset_with_clock_format", text, clock)
+    }
+
     static func formattedInteger(_ value: Int64) -> String {
         let formatter = NumberFormatter()
         formatter.locale = locale

@@ -161,11 +161,20 @@ has changed.
   (the macOS Keychain item "Claude Code-credentials", with
   `~/.claude/.credentials.json` as the fallback; `Core/ClaudeCodeCredentials.swift`
   owns the tested parser). The token is used in memory only and never copied
-  into CodexMeter's own storage. The first read needs the user's Keychain
-  consent, so it happens through a manual refresh exactly like the app's own
-  credential store; a missing or denied token surfaces as
-  `localCredentialMissing`, which pauses automatic polling until a manual
-  refresh. `saveConnection` accepts an empty key only for Claude.
+  into CodexMeter's own storage. Claude Code rewrites the item through
+  `security add-generic-password -U`, which resets its Keychain partition list
+  to `apple-tool:` and drops the "Always Allow" grant of any other app
+  (securityd logs `ACL partition mismatch`), so a direct `SecItemCopyMatching`
+  read prompts for the Keychain password after every token refresh. The store
+  therefore tries, in order: a direct read with interaction disabled, the
+  Apple-signed `/usr/bin/security find-generic-password -w` (the tool Claude
+  Code itself reads through, covered by that partition list, run only while the
+  default Keychain is unlocked and bounded by a 3 s watchdog), then a direct
+  read that may prompt, only for a manual refresh. Reading through the tool is
+  not gated by a per-app consent. Keep `Core/ClaudeCodeCredentials.swift`
+  parsing both its plain and hex-encoded output. A missing or denied token
+  surfaces as `localCredentialMissing`, which pauses automatic polling until a
+  manual refresh. `saveConnection` accepts an empty key only for Claude.
   The status wording is chosen by `ProviderConnectionStatus.failureMessageKey(for:)`
   in Core, and `ProviderUsagePresentation.status` requires the connection kind,
   so every view (overview section, detail page) shows the Claude token-expired
@@ -224,7 +233,10 @@ has changed.
   window and provider percentage bucket through the shared `QuotaWindowDetail`
   component (semibold title with the rounded percentage, optional boost note,
   large quota and remaining-time rings, pace and reset lines) so the two
-  platforms cannot diverge; `ProviderUsagePresentation.title` replaces the raw
+  platforms cannot diverge; the reset line always appends the reset instant in
+  Beijing time (`L10n.withBeijingResetClock`, fixed to Asia/Shanghai regardless
+  of the Mac's zone; clock time only on today's Beijing date, otherwise the
+  date too; `Core/BeijingResetClock.swift` owns the tested rule); `ProviderUsagePresentation.title` replaces the raw
   title only when it literally repeats the window length (Zhipu's "300m") and
   otherwise keeps it beside the localized duration ("general · 5-hour quota")
   so multi-model MiniMax accounts stay distinguishable
@@ -369,9 +381,9 @@ CodexMeter keeps no local usage database and has no history, notification,
 backup, CSV, or export chain. User-entered external platform API keys are a
 separate, explicitly configured source and may be saved only in the app-owned
 Keychain. The deliberate exception is the Claude connection: it reads the
-locally stored Claude Code OAuth token on demand with the user's Keychain
-consent, keeps it in memory only, and never persists it; no other application
-data is ever read.
+locally stored Claude Code OAuth token on demand (through the system
+`security` tool, with a user-consented direct read as the fallback), keeps it
+in memory only, and never persists it; no other application data is ever read.
 
 ## Quota display rules
 

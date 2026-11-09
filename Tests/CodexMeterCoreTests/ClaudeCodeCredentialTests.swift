@@ -43,6 +43,32 @@ final class ClaudeCodeCredentialTests: XCTestCase {
             #"{"claudeAiOauth":{"accessToken":"short"}}"#)))
     }
 
+    func testSecurityToolOutputReadsThePayloadBehindItsTrailingNewline() {
+        let output = #"{"claudeAiOauth":{"accessToken":"sk-ant-oat01-ToolOutput0k"}}"# + "\n"
+        XCTAssertEqual(
+            ClaudeCodeCredential.accessToken(fromSecurityToolOutput: data(output)),
+            "sk-ant-oat01-ToolOutput0k"
+        )
+    }
+
+    func testSecurityToolOutputDecodesAHexEncodedPayload() {
+        // The tool prints data it cannot show as plain text as a hex string.
+        let json = #"{"claudeAiOauth":{"accessToken":"sk-ant-oat01-HexOutput0k"}}"#
+        let hex = json.utf8.map { String(format: "%02x", $0) }.joined()
+        XCTAssertEqual(
+            ClaudeCodeCredential.accessToken(fromSecurityToolOutput: data(hex + "\n")),
+            "sk-ant-oat01-HexOutput0k"
+        )
+    }
+
+    func testSecurityToolOutputRejectsEmptyAndUnusableOutput() {
+        XCTAssertNil(ClaudeCodeCredential.accessToken(fromSecurityToolOutput: Data()))
+        XCTAssertNil(ClaudeCodeCredential.accessToken(fromSecurityToolOutput: data("\n")))
+        XCTAssertNil(ClaudeCodeCredential.accessToken(fromSecurityToolOutput: data("not a payload\n")))
+        // A hex string that decodes to something other than a token payload.
+        XCTAssertNil(ClaudeCodeCredential.accessToken(fromSecurityToolOutput: data("deadbeef\n")))
+    }
+
     func testAccessTokenPredicateOnlyAcceptsOAuthAccessTokens() {
         XCTAssertTrue(ClaudeCodeCredential.isAccessToken("sk-ant-oat01-abcdefghijklmnop"))
         XCTAssertFalse(ClaudeCodeCredential.isAccessToken("sk-ant-ort01-abcdefghijklmnop"))

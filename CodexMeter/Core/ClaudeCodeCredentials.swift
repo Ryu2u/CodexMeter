@@ -12,6 +12,30 @@ nonisolated enum ClaudeCodeCredential {
         value.hasPrefix("sk-ant-oat") && (20...8_192).contains(value.utf8.count)
     }
 
+    /// Reads the payload printed by `security find-generic-password -w`: the
+    /// stored bytes followed by a newline, or a hex string when the tool
+    /// cannot show them as plain text.
+    static func accessToken(fromSecurityToolOutput output: Data) -> String? {
+        guard let text = String(data: output, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
+        if let token = accessToken(from: Data(text.utf8)) { return token }
+        guard let decoded = hexDecoded(text) else { return nil }
+        return accessToken(from: decoded)
+    }
+
+    private static func hexDecoded(_ text: String) -> Data? {
+        guard text.count.isMultiple(of: 2), !text.isEmpty else { return nil }
+        var bytes = Data(capacity: text.count / 2)
+        var index = text.startIndex
+        while index < text.endIndex {
+            let next = text.index(index, offsetBy: 2)
+            guard let byte = UInt8(text[index..<next], radix: 16) else { return nil }
+            bytes.append(byte)
+            index = next
+        }
+        return bytes
+    }
+
     /// Returns the access token embedded in a Claude Code credentials JSON
     /// body, or nil when the payload carries no usable access token.
     static func accessToken(from data: Data) -> String? {

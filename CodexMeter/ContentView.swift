@@ -656,9 +656,12 @@ private struct UsageWindowsDetail: View {
 
     private func resetText(for window: CodexUsageWindow) -> String {
         if let resetsAt = window.resetsAt {
-            return L10n.format(
-                "quota.reset_remaining_format",
-                L10n.remainingDuration(until: resetsAt, from: now)
+            return L10n.withBeijingResetClock(
+                L10n.format(
+                    "quota.reset_remaining_format",
+                    L10n.remainingDuration(until: resetsAt, from: now)
+                ),
+                resetsAt: resetsAt, now: now
             )
         }
         return L10n.string("quota.reset_unavailable")

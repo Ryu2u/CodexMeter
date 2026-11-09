@@ -8312,6 +8312,29 @@
         }
       }
     },
+    "quota.reset_with_clock_format": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ · %2$@ Beijing time"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ · 北京时间 %2$@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ · 北京時間 %2$@"
+          }
+        }
+      }
+    },
     "quota.window_reset_format": {
       "extractionState": "manual",
       "localizations": {

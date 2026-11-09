@@ -355,7 +355,9 @@ struct ProviderUsageSection: View {
 
     private func resetText(for bucket: ProviderUsageBucket, at date: Date) -> String? {
         if let reset = bucket.resetsAt {
-            return L10n.format("providers.resets_format", L10n.remainingDuration(until: reset, from: date))
+            return L10n.withBeijingResetClock(
+                L10n.format("providers.resets_format", L10n.remainingDuration(until: reset, from: date)),
+                resetsAt: reset, now: date)
         }
         return bucket.remainingPercent == nil ? nil : L10n.string("quota.reset_unavailable")
     }
